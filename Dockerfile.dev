@@ -1,0 +1,24 @@
+# Development toolchain: .NET 10 SDK + jprm. Nothing is installed on the host.
+FROM mcr.microsoft.com/dotnet/sdk:10.0
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-venv curl jq \
+ && rm -rf /var/lib/apt/lists/*
+
+# Ubuntu 24.04 enforces PEP 668, so jprm goes in a venv rather than the system Python.
+RUN python3 -m venv /opt/jprm \
+ && /opt/jprm/bin/pip install --no-cache-dir jprm
+
+# Containers run as the invoking host user on Linux (see ./x), which may not exist in
+# /etc/passwd. Give that arbitrary uid a writable HOME and NuGet cache. A named volume
+# mounted at /nuget inherits these permissions when first created.
+RUN mkdir -p /home/dev /nuget && chmod 1777 /home/dev /nuget
+
+ENV PATH="/opt/jprm/bin:${PATH}" \
+    HOME=/home/dev \
+    NUGET_PACKAGES=/nuget \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1 \
+    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+
+WORKDIR /work

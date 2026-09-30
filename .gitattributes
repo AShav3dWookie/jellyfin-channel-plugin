@@ -1,0 +1,5 @@
+# Shell entry point must stay LF or the shebang breaks on Linux/NAS.
+x text eol=lf
+*.sh text eol=lf
+Dockerfile* text eol=lf
+*.yaml text eol=lf

@@ -1,0 +1,50 @@
+# Development environment. Drive it through ./x rather than directly.
+#
+# HOST_UID / HOST_GID are exported by ./x: the invoking user on Linux (so artifacts aren't
+# root-owned), 0 on Docker Desktop, which ignores bind-mount ownership anyway.
+
+services:
+  # Toolchain: build, test, package. One-shot only (`docker compose run`), hence the profile —
+  # it keeps `docker compose up` from trying to start it.
+  sdk:
+    profiles: [tools]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: linear-tv-sdk:dev
+    user: "${HOST_UID:-0}:${HOST_GID:-0}"
+    volumes:
+      - .:/work
+      - nuget:/nuget
+    working_dir: /work
+
+  # Test server. Pinned to a timestamped tag for reproducibility; the unsuffixed tag is a
+  # multi-arch manifest, so this also runs on an ARM NAS.
+  jellyfin:
+    image: jellyfin/jellyfin:12.1.20260915-010956
+    user: "${HOST_UID:-0}:${HOST_GID:-0}"
+    ports:
+      - "8097:8096"
+    environment:
+      TZ: Europe/London   # legible log timestamps only; the plugin never relies on it
+    volumes:
+      - ./testdata/jellyfin/config:/config
+      - ./testdata/jellyfin/cache:/cache
+      - ./testdata/media:/media:ro
+      # Only the shipped DLL + PDB live here (see ./x deploy). No version in the folder name:
+      # Jellyfin reads the version from the plugin, so version bumps need no change here.
+      - ./artifacts/plugin:/config/plugins/LinearTv
+
+  # Test media generator. Reuses the Jellyfin image's own ffmpeg, which ships drawtext,
+  # libx264 and DejaVu fonts, so there is nothing extra to pull.
+  ffmpeg:
+    profiles: [tools]
+    image: jellyfin/jellyfin:12.1.20260915-010956
+    user: "${HOST_UID:-0}:${HOST_GID:-0}"
+    entrypoint: ["/usr/lib/jellyfin-ffmpeg/ffmpeg", "-hide_banner", "-loglevel", "error"]
+    volumes:
+      - ./testdata/media:/media
+      - ./artifacts:/artifacts
+
+volumes:
+  nuget:

@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Linear TV</title>
+</head>
+<body>
+<div id="LinearTvConfigPage"
+     data-role="page"
+     class="page type-interior pluginConfigurationPage">
+    <style>
+        #LinearTvConfigPage .ltv-channel { display: flex; align-items: center; gap: 1em; padding: .6em .8em; border-bottom: 1px solid rgba(128,128,128,.25); }
+        #LinearTvConfigPage .ltv-channel-number { font-weight: bold; min-width: 3em; }
+        #LinearTvConfigPage .ltv-channel-main { flex: 1; min-width: 0; }
+        #LinearTvConfigPage .ltv-channel-content { opacity: .7; font-size: .9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #LinearTvConfigPage .ltv-picker { max-height: 22em; overflow-y: auto; border: 1px solid rgba(128,128,128,.35); padding: .5em .8em; border-radius: .3em; }
+        #LinearTvConfigPage .ltv-picker h4 { margin: .8em 0 .3em; opacity: .7; }
+        #LinearTvConfigPage .ltv-picker label { display: block; padding: .2em 0; cursor: pointer; }
+        #LinearTvConfigPage .ltv-order { margin: .6em 0; opacity: .8; font-size: .9em; }
+        #LinearTvConfigPage .ltv-editor { border: 1px solid rgba(128,128,128,.35); border-radius: .3em; padding: 1em; margin: 1em 0; }
+        #LinearTvConfigPage .ltv-buttons { display: flex; gap: .6em; margin-top: 1em; }
+        #LinearTvConfigPage .ltv-empty { opacity: .7; padding: .8em 0; }
+    </style>
+
+    <div data-role="content">
+        <div class="content-primary">
+
+            <div class="verticalSection">
+                <h2 class="sectionTitle">Channels</h2>
+                <p class="fieldDescription">
+                    Each channel loops its content on a fixed schedule and appears in Live TV.
+                    Tuning in joins whatever is on, part-way through. Changes appear in the guide
+                    a few moments after saving.
+                </p>
+                <div id="ltvChannelList"></div>
+                <div class="ltv-buttons">
+                    <button is="emby-button" type="button" id="ltvAddChannel" class="raised emby-button">
+                        <span>Add channel</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="ltvEditor" class="ltv-editor" hidden>
+                <h3 id="ltvEditorTitle">Add channel</h3>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="ltvNumber">Channel number</label>
+                    <input is="emby-input" type="text" id="ltvNumber" placeholder="101" />
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="ltvName">Channel name</label>
+                    <input is="emby-input" type="text" id="ltvName" placeholder="Sitcoms" />
+                </div>
+
+                <div class="selectContainer">
+                    <label class="selectLabel" for="ltvShuffle">Order</label>
+                    <select is="emby-select" id="ltvShuffle">
+                        <option value="false">In order &mdash; episodes play in sequence</option>
+                        <option value="true">Shuffle &mdash; reshuffled every time the channel loops</option>
+                    </select>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="ltvFilter">Content</label>
+                    <input is="emby-input" type="text" id="ltvFilter" placeholder="Filter by name" />
+                    <div class="fieldDescription">
+                        Tick series, collections or whole libraries. To put individual films on a
+                        channel, put them in a collection.
+                    </div>
+                </div>
+                <div id="ltvPicker" class="ltv-picker"></div>
+                <div id="ltvOrder" class="ltv-order"></div>
+
+                <div class="ltv-buttons">
+                    <button is="emby-button" type="button" id="ltvSaveChannel" class="raised button-submit emby-button">
+                        <span>Save channel</span>
+                    </button>
+                    <button is="emby-button" type="button" id="ltvCancel" class="raised button-cancel emby-button">
+                        <span>Cancel</span>
+                    </button>
+                </div>
+            </div>
+
+            <form id="LinearTvConfigForm">
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Settings</h2>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="JoinThresholdMinutes">
+                        Join threshold (minutes)
+                    </label>
+                    <input is="emby-input" type="number" id="JoinThresholdMinutes"
+                           name="JoinThresholdMinutes" min="0" max="60" />
+                    <div class="fieldDescription">
+                        Tuning in with less than this left of a programme starts the next one
+                        instead of catching the credits. Zero disables.
+                    </div>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="ScheduleHorizonHours">
+                        Guide horizon (hours)
+                    </label>
+                    <input is="emby-input" type="number" id="ScheduleHorizonHours"
+                           name="ScheduleHorizonHours" min="25" max="336" />
+                    <div class="fieldDescription">
+                        How far ahead the guide shows. Keep it above 24: the guide refreshes daily.
+                    </div>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="ScheduleTimeZone">
+                        Schedule timezone
+                    </label>
+                    <input is="emby-input" type="text" id="ScheduleTimeZone"
+                           name="ScheduleTimeZone" placeholder="Europe/London" />
+                    <div class="fieldDescription">
+                        IANA timezone for future wall-clock schedule rules. Not used yet.
+                    </div>
+                </div>
+
+                <div>
+                    <button is="emby-button" type="submit"
+                            class="raised button-submit block emby-button">
+                        <span>Save settings</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            var pluginId = '437f1b36-c02d-4c02-9083-19440d7f243b';
+
+            var page = document.querySelector('#LinearTvConfigPage');
+            var $ = function (sel) { return page.querySelector(sel); };
+
+            // Library items that can feed a channel, by normalised id.
+            var sources = {};
+            var sourceGroups = [];
+            // The channel being edited, and the ids ticked, in the order they were ticked.
+            var editing = null;
+            var picked = [];
+
+            // Ids arrive without hyphens from the API; send them in the hyphenated form every
+            // JSON reader accepts, and compare them in one canonical form.
+            function norm(id) { return String(id || '').replace(/-/g, '').toLowerCase(); }
+            function toGuid(id) {
+                var n = norm(id);
+                return n.length !== 32 ? id :
+                    n.slice(0, 8) + '-' + n.slice(8, 12) + '-' + n.slice(12, 16) + '-' + n.slice(16, 20) + '-' + n.slice(20);
+            }
+
+            function el(tag, text, cls) {
+                var e = document.createElement(tag);
+                if (text !== undefined) { e.textContent = text; }
+                if (cls) { e.className = cls; }
+                return e;
+            }
+
+            function alertUser(message) {
+                if (window.Dashboard && Dashboard.alert) { Dashboard.alert(message); } else { alert(message); }
+            }
+
+            function sourceName(id) {
+                var s = sources[norm(id)];
+                return s ? s.Name : '(missing from library)';
+            }
+
+            function loadSources() {
+                var userId = ApiClient.getCurrentUserId();
+                return Promise.all([
+                    ApiClient.getVirtualFolders(),
+                    ApiClient.getItems(userId, { IncludeItemTypes: 'Series', Recursive: true, SortBy: 'SortName' }),
+                    ApiClient.getItems(userId, { IncludeItemTypes: 'BoxSet', Recursive: true, SortBy: 'SortName' })
+                ]).then(function (r) {
+                    var libraries = (r[0] || []).filter(function (f) { return f.ItemId; })
+                        .map(function (f) { return { Id: f.ItemId, Name: f.Name }; });
+                    sourceGroups = [
+                        { title: 'Series', items: r[1].Items || [] },
+                        { title: 'Collections', items: r[2].Items || [] },
+                        { title: 'Whole libraries', items: libraries }
+                    ];
+                    sources = {};
+                    sourceGroups.forEach(function (g) {
+                        g.items.forEach(function (i) { sources[norm(i.Id)] = { Id: i.Id, Name: i.Name }; });
+                    });
+                });
+            }
+
+            function renderChannels(config) {
+                var list = $('#ltvChannelList');
+                list.innerHTML = '';
+                var channels = (config.Channels || []).slice().sort(function (a, b) {
+                    return (parseFloat(a.Number) || 0) - (parseFloat(b.Number) || 0);
+                });
+
+                if (!channels.length) {
+                    list.appendChild(el('div', 'No channels yet. Add one to get started.', 'ltv-empty'));
+                    return;
+                }
+
+                channels.forEach(function (ch) {
+                    var row = el('div', undefined, 'ltv-channel');
+                    row.appendChild(el('div', ch.Number, 'ltv-channel-number'));
+
+                    var main = el('div', undefined, 'ltv-channel-main');
+                    main.appendChild(el('div', ch.Name));
+                    main.appendChild(el('div',
+                        (ch.Shuffle ? 'Shuffle · ' : 'In order · ') + (ch.SourceIds || []).map(sourceName).join(', '),
+                        'ltv-channel-content'));
+                    row.appendChild(main);
+
+                    var edit = el('button', 'Edit', 'raised emby-button');
+                    edit.type = 'button';
+                    edit.addEventListener('click', function () { openEditor(ch); });
+                    row.appendChild(edit);
+
+                    var del = el('button', 'Delete', 'raised button-cancel emby-button');
+                    del.type = 'button';
+                    del.addEventListener('click', function () { deleteChannel(ch); });
+                    row.appendChild(del);
+
+                    list.appendChild(row);
+                });
+            }
+
+            function renderPicker() {
+                var picker = $('#ltvPicker');
+                var filter = $('#ltvFilter').value.trim().toLowerCase();
+                picker.innerHTML = '';
+                var shown = 0;
+
+                sourceGroups.forEach(function (group) {
+                    var items = group.items.filter(function (i) {
+                        return !filter || String(i.Name).toLowerCase().indexOf(filter) !== -1;
+                    });
+                    if (!items.length) { return; }
+
+                    picker.appendChild(el('h4', group.title));
+                    items.forEach(function (item) {
+                        var label = el('label');
+                        var box = document.createElement('input');
+                        box.type = 'checkbox';
+                        box.checked = picked.indexOf(norm(item.Id)) !== -1;
+                        box.addEventListener('change', function () {
+                            var id = norm(item.Id);
+                            picked = picked.filter(function (p) { return p !== id; });
+                            if (box.checked) { picked.push(id); }
+                            renderOrder();
+                        });
+                        label.appendChild(box);
+                        label.appendChild(document.createTextNode(' ' + item.Name));
+                        picker.appendChild(label);
+                        shown++;
+                    });
+                });
+
+                if (!shown) {
+                    picker.appendChild(el('div', filter ? 'Nothing matches that filter.' : 'Your library has no series, collections or libraries yet.', 'ltv-empty'));
+                }
+            }
+
+            function renderOrder() {
+                $('#ltvOrder').textContent = picked.length
+                    ? 'Plays in this order: ' + picked.map(sourceName).join(' → ')
+                    : 'Nothing selected yet.';
+            }
+
+            function openEditor(channel) {
+                editing = channel || null;
+                $('#ltvEditorTitle').textContent = channel ? 'Edit channel' : 'Add channel';
+                $('#ltvNumber').value = channel ? channel.Number : '';
+                $('#ltvName').value = channel ? channel.Name : '';
+                $('#ltvShuffle').value = channel && channel.Shuffle ? 'true' : 'false';
+                $('#ltvFilter').value = '';
+                picked = channel ? (channel.SourceIds || []).map(norm) : [];
+                renderPicker();
+                renderOrder();
+                $('#ltvEditor').hidden = false;
+                $('#ltvNumber').focus();
+            }
+
+            function closeEditor() {
+                editing = null;
+                picked = [];
+                $('#ltvEditor').hidden = true;
+            }
+
+            function saveConfig(mutate) {
+                Dashboard.showLoadingMsg();
+                return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    config.Channels = config.Channels || [];
+                    var error = mutate(config);
+                    if (error) {
+                        Dashboard.hideLoadingMsg();
+                        alertUser(error);
+                        return false;
+                    }
+                    return ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                        renderChannels(config);
+                        return true;
+                    });
+                });
+            }
+
+            function saveChannel() {
+                var number = $('#ltvNumber').value.trim();
+                var name = $('#ltvName').value.trim();
+
+                if (!number) { return alertUser('Give the channel a number.'); }
+                if (!name) { return alertUser('Give the channel a name.'); }
+                if (!picked.length) { return alertUser('Tick at least one series, collection or library.'); }
+
+                var editingId = editing ? editing.Id : null;
+                saveConfig(function (config) {
+                    var clash = config.Channels.some(function (c) { return c.Number === number && c.Id !== editingId; });
+                    if (clash) { return 'Channel ' + number + ' already exists.'; }
+
+                    var values = {
+                        Number: number,
+                        Name: name,
+                        Shuffle: $('#ltvShuffle').value === 'true',
+                        SourceIds: picked.map(toGuid)
+                    };
+
+                    var existing = editingId && config.Channels.filter(function (c) { return c.Id === editingId; })[0];
+                    if (existing) {
+                        Object.assign(existing, values);
+                    } else {
+                        // No Id: the server assigns one.
+                        config.Channels.push(values);
+                    }
+                    return null;
+                }).then(function (saved) {
+                    if (saved) {
+                        closeEditor();
+                        // Reload so a new channel picks up its server-assigned Id.
+                        ApiClient.getPluginConfiguration(pluginId).then(renderChannels);
+                    }
+                });
+            }
+
+            function deleteChannel(channel) {
+                if (!confirm('Delete channel ' + channel.Number + ' (' + channel.Name + ')?')) { return; }
+                saveConfig(function (config) {
+                    config.Channels = config.Channels.filter(function (c) { return c.Id !== channel.Id; });
+                    return null;
+                });
+            }
+
+            $('#ltvAddChannel').addEventListener('click', function () { openEditor(null); });
+            $('#ltvCancel').addEventListener('click', closeEditor);
+            $('#ltvSaveChannel').addEventListener('click', saveChannel);
+            $('#ltvFilter').addEventListener('input', renderPicker);
+
+            page.addEventListener('pageshow', function () {
+                Dashboard.showLoadingMsg();
+                closeEditor();
+                Promise.all([ApiClient.getPluginConfiguration(pluginId), loadSources()]).then(function (r) {
+                    var config = r[0];
+                    $('#JoinThresholdMinutes').value = config.JoinThresholdMinutes;
+                    $('#ScheduleHorizonHours').value = config.ScheduleHorizonHours;
+                    $('#ScheduleTimeZone').value = config.ScheduleTimeZone || '';
+                    renderChannels(config);
+                    Dashboard.hideLoadingMsg();
+                }, function () {
+                    Dashboard.hideLoadingMsg();
+                    alertUser('Could not load Linear TV settings.');
+                });
+            });
+
+            $('#LinearTvConfigForm').addEventListener('submit', function (e) {
+                e.preventDefault();
+                saveConfig(function (config) {
+                    config.JoinThresholdMinutes = parseInt($('#JoinThresholdMinutes').value, 10) || 0;
+                    config.ScheduleHorizonHours = parseInt($('#ScheduleHorizonHours').value, 10) || 48;
+                    config.ScheduleTimeZone = $('#ScheduleTimeZone').value.trim();
+                    return null;
+                });
+                return false;
+            });
+        })();
+    </script>
+</div>
+</body>
+</html>

@@ -1,0 +1,22 @@
+---
+name: "Linear TV"
+guid: "437f1b36-c02d-4c02-9083-19440d7f243b"
+imageUrl: ""
+version: "0.1.0.0"
+targetAbi: "12.0.0.0"
+framework: "net10.0"
+owner: "aaronhanna91"
+overview: "Pseudo live TV channels built from your library."
+description: >
+  Turns library content into tunable pseudo live TV channels with a wall-clock schedule.
+  Channels appear natively in the Live TV guide, cannot be sought, and play on from one
+  programme to the next. The plugin never decodes or encodes video: it joins Jellyfin's own
+  stream copies end to end, and any transcoding is done by Jellyfin.
+category: "LiveTV"
+artifacts:
+  - "Jellyfin.Plugin.LinearTv.dll"
+changelog: >
+  First release. Channels from series, collections or whole libraries, played in order or
+  shuffled, in the Live TV guide. Tune in part-way through a programme; programmes run on
+  into the next; about 2 seconds to change channel in a browser. Known limit: channels that
+  mix video formats (e.g. H.264 and HEVC) are untested and may fail where the format changes.
