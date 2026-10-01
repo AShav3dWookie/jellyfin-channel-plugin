@@ -2,7 +2,7 @@
 # Single entry point for development. Requires only Docker - no host SDK, no host tools.
 # Works in Git Bash on Windows and natively on Linux (including the NAS).
 #
-#   ./x build | test | deploy | up | down | logs | media | init | spike1 | package | shell
+#   ./x build | test | deploy | up | down | logs | media | init | mirror | channels | spike1 | package | shell
 #
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -246,6 +246,69 @@ echo "==> API key saved to artifacts/.testserver.env - log in at http://localhos
 EOF
 }
 
+# A stand-in for a real library, for testing channel import against real titles.
+#
+# Copies the folder structure of real Movies and TV folders (a NAS share is fine) as EMPTY
+# placeholder files under testdata/media/mirror/. The source is only listed: no file is opened,
+# so it works on a read-only share, or on one whose files this user can't read. Jellyfin then
+# identifies the placeholders by name through TMDb, as a production server would, giving real
+# titles, years, episode numbers and collections. Item ids differ from the production server's
+# (different paths), which is exactly the cross-server case the import format is built for.
+# The placeholders don't play.
+cmd_mirror() {
+  local movies="${1:-}" tv="${2:-}"
+  [[ -n "$movies" && -n "$tv" ]] || die "usage: ./x mirror <moviesDir> <tvDir>   e.g. ./x mirror //TRUENAS/media/Movies //TRUENAS/media/TV"
+  jellyfin_running || die "test server is not running - ./x up"
+  [[ -f artifacts/.testserver.env ]] || die "no API key - run ./x init"
+
+  local name src dest n skipped
+  for name in movies tv; do
+    [[ $name == movies ]] && src="$movies" || src="$tv"
+    [[ -d "$src" ]] || die "cannot list $src"
+    dest="testdata/media/mirror/$name"
+    skipped="$PWD/artifacts/mirror-$name-skipped.txt"
+    rm -rf "$dest" && mkdir -p "$dest"
+    info "Mirroring $src -> $dest (names only)"
+    ( cd "$src" && find . -type f \( -iname '*.mkv' -o -iname '*.mp4' -o -iname '*.m4v' -o -iname '*.avi' \
+        -o -iname '*.ts' -o -iname '*.m2ts' -o -iname '*.wmv' -o -iname '*.mov' -o -iname '*.mpg' -o -iname '*.webm' \) \
+        -print0 2>"$skipped" || true ) \
+      | while IFS= read -r -d '' f; do mkdir -p "$dest/$(dirname "$f")" && : > "$dest/$f"; done
+    n=$(find "$dest" -type f | wc -l)
+    info "  $n placeholder files"
+    # Folders this user can't list are skipped, not forced: their permissions are the NAS's call.
+    if [[ -s "$skipped" ]]; then
+      info "  skipped $(wc -l < "$skipped") unreadable folder(s); see artifacts/mirror-$name-skipped.txt"
+    fi
+  done
+
+  docker compose run --rm -T sdk bash -s <<'EOF'
+set -euo pipefail
+J=http://jellyfin:8096; H='Content-Type: application/json'
+KEY=$(sed -n 's/^API_KEY=//p' artifacts/.testserver.env)
+A="Authorization: MediaBrowser Token=\"$KEY\""
+
+# Remote metadata ON (that's the point), but nothing saved beside the media and no trickplay or
+# chapter images: the placeholders have no frames, and /media is mounted read-only anyway.
+opts='{"LibraryOptions":{"EnableRealtimeMonitor":false,"MetadataSavers":[],"SaveLocalMetadata":false,
+  "EnableTrickplayImageExtraction":false,"EnableChapterImageExtraction":false,
+  "AutomaticallyAddToCollection":true,"PreferredMetadataLanguage":"en","MetadataCountryCode":"GB"}}'
+
+for lib in "Mirror Movies|movies|/media/mirror/movies" "Mirror TV|tvshows|/media/mirror/tv"; do
+  IFS='|' read -r name type path <<<"$lib"
+  if curl -sf "$J/Library/VirtualFolders" -H "$A" | jq -e --arg n "$name" '.[] | select(.Name==$n)' >/dev/null; then
+    echo "==> Rescanning $name"
+  else
+    echo "==> Creating $name library"
+    curl -sf -X POST "$J/Library/VirtualFolders?name=$(jq -rn --arg n "$name" '$n|@uri')&collectionType=$type&paths=$path&refreshLibrary=false" \
+      -H "$A" -H "$H" -d "$opts"
+  fi
+done
+curl -sf -X POST "$J/Library/Refresh" -H "$A"
+echo "==> Scan started. TMDb lookups for a large library take a while; watch progress with:"
+echo "    curl -s localhost:8097/Items/Counts -H 'Authorization: MediaBrowser Token=\"<API_KEY>\"'"
+EOF
+}
+
 # Spike 1: does Jellyfin's own endpoint honour startTimeTicks under a copy remux?
 # Runs inside the compose network against http://jellyfin:8096 - the same internal URL
 # shape the plugin will use via GetApiUrlForLocalAccess().
@@ -306,6 +369,9 @@ cmd_package() {
   info "Serve artifacts/repo/ and add $repo_url/manifest.json as a repository in Jellyfin"
 }
 
+# Channel files against a live server (test, or the NAS with --nas). See tools/channels.sh.
+cmd_channels() { sdk bash tools/channels.sh "$@"; }
+
 cmd_shell() { sdk bash; }
 
 usage() {
@@ -318,6 +384,8 @@ usage: ./x <command>
   up | down | logs             test server lifecycle (http://localhost:8097)
   media                        generate test clips with a burned-in clock
   init                         wizard + Shows library + API key (idempotent)
+  mirror <moviesDir> <tvDir>   real library as empty placeholders, for import tests
+  channels [--nas] <cmd>       library, list, backup, check, import, restore (help: ./x channels)
   spike1 <itemId> [secs]       does a copy remux honour startTimeTicks?
   package <version> <repoUrl>  release zip + manifest.json for the NAS
   shell                        shell in the SDK container
@@ -330,7 +398,7 @@ EOF
 
 command="${1:-}"; shift || true
 case "$command" in
-  build|test|deploy|up|down|logs|media|init|spike1|package|shell) "cmd_$command" "$@" ;;
+  build|test|deploy|up|down|logs|media|init|mirror|channels|spike1|package|shell) "cmd_$command" "$@" ;;
   ""|-h|--help|help) usage ;;
   *) usage; exit 1 ;;
 esac

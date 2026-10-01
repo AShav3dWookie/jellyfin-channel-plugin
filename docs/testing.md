@@ -22,6 +22,7 @@ Bash) on 2026-09-30, unless it is marked **not yet run**.
 | **Live TV (channels and guide)** | **http://localhost:8097/web/#/livetv** |
 | Plugin settings (create channels here) | http://localhost:8097/web/#/configurationpage?name=Linear%20TV |
 | Plugin list | http://localhost:8097/web/#/dashboard/plugins |
+| Channel import/export | `./x channels` (help with no arguments), or the endpoints `POST /LinearTv/Channels/Import` and `GET /LinearTv/Channels/Export`; see [channel-format.md](./channel-format.md) and tests I–K |
 | Server logs | `./x logs` (Ctrl+C to stop following) |
 | Help | `./x` with no arguments |
 
@@ -397,6 +398,125 @@ excluding them.
 
 **Tuning in again always works**: a fresh tune sets everything up for the programme on air.
 The exception is AV1, which has no picture however you tune in.
+
+### I. Import channels from a file
+
+**Purpose:** channels written outside Jellyfin, by hand or by an AI, load straight into the
+guide. The format and endpoints are in [channel-format.md](./channel-format.md).
+
+Set up once per shell:
+
+```bash
+. artifacts/.testserver.env
+AUTH="Authorization: MediaBrowser Token=\"$API_KEY\""
+jq() { docker run --rm -i --entrypoint jq linear-tv-sdk:dev "$@"; }
+curl -s localhost:8097/LinearTv/Channels/Export -H "$AUTH" > artifacts/channels-backup.json
+```
+
+Write `artifacts/try.json`, referring to everything by name:
+
+```jsonc
+{
+  "channels": [
+    { "number": "105", "name": "Pick and Mix", "content": [
+      { "type": "show", "title": "clock show" },
+      { "type": "episode", "series": "Short Show", "season": 1, "episode": 3 },
+      { "type": "episode", "series": "Mixed Show", "season": 1, "episode": 1 },
+    ]},
+  ]
+}
+```
+
+1. **Dry run:**
+   `curl -s "localhost:8097/LinearTv/Channels/Import?dryRun=true" -H "$AUTH" -H "Content-Type: application/json" --data-binary @artifacts/try.json`
+   **Pass:** HTTP 200, `"ok": true`, `"saved": false`, action `create`, and each entry
+   `matched` to the right item. The export still lists only the original channels.
+2. **Import:** the same command without `?dryRun=true`. **Pass:** `"saved": true`. Within a
+   few seconds **105 Pick and Mix** is in the Live TV guide, showing Clock Show S01E01–06, then
+   Short Show S01E03, then Mixed Show S01E01.
+3. **Refusals:** change a title to `Clok Show`, and add a second channel numbered `105`.
+   **Pass:** HTTP 422, `"saved": false`, a `not found` problem for *Clok Show*, and an error
+   naming the duplicate number. The export is unchanged. Change the title to `Clock` and the
+   problem should suggest *Clock Show*.
+4. **Replace:** import `artifacts/channels-backup.json` with `?mode=replace`. **Pass:**
+   `removed` lists `105 Pick and Mix`, the four original channels report `unchanged`, and 105
+   leaves the guide.
+5. **Admins only:** the export without the `-H "$AUTH"` gets **401**. With a non-admin user's
+   token it gets **403**.
+
+Verified 2026-10-01, all five steps:
+
+| Step | Result |
+|---|---|
+| 1. Dry run | 200, every entry matched, nothing saved. A fourth entry, Short Show under a made-up item ID, matched by name with the note *id not on this server* |
+| 2. Import | saved; 105 in the guide in the right order (Clock Show E01–06, Short Show E03, Mixed Show E01, then the Short Show series) |
+| 3. Refusals | 422 with `Channel number 105 appears more than once`, `Clok Show: not found`, `Clock: not found; did you mean Clock Show?`, and `movie 'Clock Show'` explaining it's a series. Nothing saved. Broken JSON, `mode=wipe` and `version: 2` each got 400 with a message |
+| 4. Replace | dry run listed `105 Pick and Mix` as removed and 101–104 as unchanged; after the real import, 105 left the guide within ~15 s |
+| 5. Admins only | no token 401, bad token 401, non-admin user 403 (export and import), admin 200 |
+
+### J. Import against your real library
+
+Test I uses five made-up shows. This checks the matching against real titles: remakes,
+subtitles, punctuation, collections, and how your files happen to be named.
+
+```bash
+./x mirror //TRUENAS/media/Movies //TRUENAS/media/TV
+```
+
+This copies the **folder structure only** into `testdata/media/mirror/`, as empty placeholder
+files. The shares are listed but no file on them is opened, so read-only access is enough.
+Folders you can't list are skipped and logged in `artifacts/mirror-*-skipped.txt`. It then
+adds *Mirror Movies* and *Mirror TV* libraries to the test server, with TMDb metadata on, so
+the titles, years and collections come out as they do on the NAS. The first scan takes
+a while, around 10–30 minutes for ~1,750 files, mostly fetching cast lists. The
+placeholders don't play.
+
+Then follow [channel-format.md](./channel-format.md), *Generating channels with an AI*,
+against the test server. Ask for channels from the list, dry-run, and read the report.
+
+**Run 2026-10-02** against the user's library: 600 films and 1,154 episodes mirrored, five
+unlistable folders skipped. TMDb had identified 146 films and 14 series when it was run.
+Four channels and 31 references were written **from memory, not copied from the list**, the
+way an AI would, in `artifacts/real.json`.
+
+| | First run | After the fixes |
+|---|---|---|
+| Matched | 25 of 31 | **30 of 31** |
+| `Alien 3` → *Alien³*, `The Accountant 2` → *The Accountant²* | not found; plain `The Accountant` reported as ambiguous | matched. **Bug:** superscripts were dropped, not read as digits |
+| `Die Hard 2: Die Harder` → *Die Hard 2*, `Dracula` (1992) → *Bram Stoker's Dracula* | not found, though the right title was suggested | matched as partial titles confirmed by year, with a note |
+| `Barry` as a movie | refused: *no movie of that name, but Barry (2018) is a series* | same; a planted mistake |
+
+Matched first time: punctuation (`Alien: Resurrection`, `2001 A Space Odyssey`,
+`ET the Extra Terrestrial`, `Daredevil - Born Again`), `Chico and Rita` → *Chico & Rita*,
+`Cache` → *Caché*, `Invincible` → *INVINCIBLE*, `Fargo` 1997 → 1996 with a note, two single
+episodes, and a whole library.
+
+The matching rules (case, punctuation, accents, `&`, years ±1, ambiguity, suggestions) and the
+merge and replace logic are covered by unit tests in `ChannelImporterTests`.
+
+### K. `./x channels` keeps its guarantees
+
+**Purpose:** the script is what makes repeated use safe, whether it's you or an AI running it.
+The test server is the default target, so none of this touches the NAS.
+
+| Try | Pass |
+|---|---|
+| `./x channels library` | Writes `artifacts/channels/test/{library,episodes,libraries}.jsonl` and prints the counts |
+| `import` a file that was never checked | Refused, telling you the `check` command to run |
+| `check` it, then `import` | Backs up first (and says where), then imports. `list` shows the new channel |
+| `import` the same file again | Refused: each check is good for one import |
+| `check`, edit the file, then `import` | Refused: the content changed since the check |
+| `check` in merge mode, then `import --replace` | Refused: the check was for the other mode |
+| `check` a file with a bad title and a missing number | 422 and exit 1, with `X` lines for both |
+| `restore` the backup | Dry-runs first, backs up again, then replaces the list; *Removed* names the new channel |
+| `--nas list` without `artifacts/.nas.env` | Says what to put in the file |
+
+All verified 2026-10-02.
+
+**One caveat from the run:** about 780 mirrored episodes had no series or episode number. They
+had never been refreshed (`DateLastRefreshed: null`), because a redeploy restarted the server
+mid-scan. Re-run the scan (*Dashboard → Libraries → Scan*) and they fill in. A server that has
+finished scanning, like the NAS, doesn't have this.
 
 ---
 

@@ -91,9 +91,25 @@ Follows [feasibility.md](./feasibility.md). Supersedes the concat/remux plan.
 >   (d) Transcode non-matching programmes: continuous everywhere, but a full re-encode of those.
 >   (e) Single-format channels only: impractical with this library.
 >
+> - **Channels can be imported and exported as JSON (2026-10-01).** Channels get generated
+>   outside Jellyfin, by hand or by an AI given a list of the library, and loaded live. The
+>   Claude API was considered for generating them inside the plugin and decided against.
+>   `POST /LinearTv/Channels/Import` and `GET /LinearTv/Channels/Export` are admin-only. The
+>   format names content by title and year, or by series, season and episode, because item IDs
+>   derive from file paths and differ between servers. Matching ignores case, punctuation and
+>   accents, and allows a year off by one. Anything ambiguous or missing is refused, with
+>   suggestions. Imports are all or nothing, offer a dry run, and either merge by channel number
+>   or replace the whole list. User documentation: [channel-format.md](./channel-format.md).
+>   Driven by `./x channels` (`tools/channels.sh`), which backs up before every import and
+>   imports only a file that passed a check against that server, and by the repo's
+>   `make-channels` skill (`.claude/skills/`), which holds the workflow and conventions for
+>   generating channels in Claude Code.
+>
 > Code map: `Scheduling/` (pure: schedule, shuffle), `Library/ContentResolver.cs` (sources →
 > playable items), `LiveTv/` (the `ILiveTvService`; `LinearLiveStream`, `ChannelStream` and
-> `TsSplicer` for continuous playback; URL builder, API key, guide refresh).
+> `TsSplicer` for continuous playback; URL builder, API key, guide refresh), `Import/` (pure:
+> the channel file format, name matching, merging; plus the library snapshot it matches
+> against), `Api/` (the stream and import/export endpoints).
 
 **Architecture: the plugin serves no media.** It implements `ILiveTvService` to publish
 channels and an EPG, and when a channel is tuned it returns a `MediaSourceInfo` whose `Path`

@@ -1,3 +1,4 @@
+using Jellyfin.Plugin.LinearTv.Import;
 using Jellyfin.Plugin.LinearTv.Library;
 using Jellyfin.Plugin.LinearTv.LiveTv;
 using MediaBrowser.Controller;
@@ -21,6 +22,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ContentResolver>();
         serviceCollection.AddSingleton<ApiKeyProvider>();
         serviceCollection.AddSingleton<StreamRegistry>();
+        serviceCollection.AddSingleton<LibraryCatalogueSource>();
 
         // Jellyfin's LiveTvManager takes IEnumerable<ILiveTvService>; this adds ours alongside
         // the built-in one rather than replacing it.
