@@ -20,6 +20,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.TryAddSingleton(TimeProvider.System);
         serviceCollection.AddSingleton<ContentResolver>();
         serviceCollection.AddSingleton<ApiKeyProvider>();
+        serviceCollection.AddSingleton<StreamRegistry>();
 
         // Jellyfin's LiveTvManager takes IEnumerable<ILiveTvService>; this adds ours alongside
         // the built-in one rather than replacing it.

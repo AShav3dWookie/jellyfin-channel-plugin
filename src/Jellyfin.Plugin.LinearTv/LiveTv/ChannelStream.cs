@@ -20,6 +20,12 @@ internal interface IChannelPlanner
 
     /// <summary>Human-readable programme description, for logs.</summary>
     string Describe(Guid itemId);
+
+    /// <summary>
+    /// The item's format as a player sees it, video and audio codec (e.g. "h264/aac"), or null if
+    /// unknown. Programmes in the same format can play straight through; a change can't.
+    /// </summary>
+    string? FormatOf(Guid itemId);
 }
 
 /// <summary>
@@ -27,9 +33,18 @@ internal interface IChannelPlanner
 /// each following programme from its start, in schedule order.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The plugin only joins Jellyfin's own remux output here, passing it through a
 /// <see cref="TsSplicer"/> so the timeline runs continuously across programmes. Nothing is decoded
 /// or re-encoded.
+/// </para>
+/// <para>
+/// The stream ends cleanly at the first programme in a different format from the one tuned in
+/// on. Players set up their decoders once, at the start: measured, a browser's picture froze at
+/// the first codec change and a TV-style decoder decoded only the matching programmes
+/// (docs/testing.md channels test H). Ending instead sends the player back to the menu, and
+/// tuning in again sets everything up for the new programme.
+/// </para>
 /// </remarks>
 internal sealed class ChannelStream(
     IChannelPlanner planner, HttpClient http, ILogger logger, bool spliceTimestamps = true, TimeProvider? time = null) : Stream
@@ -52,6 +67,7 @@ internal sealed class ChannelStream(
     private readonly byte[] _chunk = new byte[64 * 1024];
 
     private ScheduledProgram? _programme;
+    private string? _tunedFormat;
     private HttpResponseMessage? _response;
     private Stream? _body;
     private bool _started;
@@ -224,6 +240,17 @@ internal sealed class ChannelStream(
                 return false;
             }
 
+            // Compared with the programme the player was set up for. Unknown formats never stop
+            // the channel: missing information shouldn't cut it short.
+            var format = planner.FormatOf(programme.ItemId);
+            if (_tunedFormat is not null && format is not null && format != _tunedFormat)
+            {
+                logger.LogInformation(
+                    "{Channel}: {Programme} is {Format}, not {TunedFormat}; ending the stream so the player can tune in afresh",
+                    planner.ChannelName, planner.Describe(programme.ItemId), format, _tunedFormat);
+                return false;
+            }
+
             _programme = programme;
             try
             {
@@ -235,6 +262,7 @@ internal sealed class ChannelStream(
                 logger.LogInformation(
                     "{Channel}: playing {Programme} from {Offset:hh\\:mm\\:ss}",
                     planner.ChannelName, planner.Describe(programme.ItemId), TimeSpan.FromTicks(offset));
+                _tunedFormat ??= format;
                 return true;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

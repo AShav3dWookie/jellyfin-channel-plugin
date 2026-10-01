@@ -31,11 +31,33 @@ public class LinearLiveStreamTests
     }
 
     [Fact]
-    public void Path_PointsAtJellyfinsLiveStreamEndpointForThisStream()
+    public void Path_PointsAtThePluginsOwnStreamEndpoint()
     {
+        // Not Jellyfin's /LiveTv/LiveStreamFiles: that holds a finished stream open for 30 s.
         var stream = Create(new MediaSourceInfo { Id = "ch", Path = "http://original", MediaStreams = [] });
 
-        Assert.Equal($"http://127.0.0.1:8096/LiveTv/LiveStreamFiles/{stream.UniqueId}/stream.ts", stream.MediaSource.Path);
+        Assert.Equal($"http://127.0.0.1:8096/LinearTv/Stream/{stream.UniqueId}.ts", stream.MediaSource.Path);
+    }
+
+    [Fact]
+    public void Closing_RemovesTheStreamFromTheRegistry_Once()
+    {
+        var registry = new StreamRegistry();
+        var removals = 0;
+        var stream = new LinearLiveStream(
+            new MediaSourceInfo { Id = "ch", MediaStreams = [] },
+            () => new MemoryStream(),
+            "http://127.0.0.1:8096",
+            s => { removals++; registry.Remove(s); });
+        registry.Add(stream);
+
+        Assert.Same(stream, registry.Find(stream.UniqueId));
+
+        stream.Close();
+        stream.Dispose(); // Jellyfin may do both
+
+        Assert.Null(registry.Find(stream.UniqueId));
+        Assert.Equal(1, removals);
     }
 
     [Fact]

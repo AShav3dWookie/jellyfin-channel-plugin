@@ -29,7 +29,8 @@ die()  { echo "error: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
 
 sdk()    { docker compose run --rm --build sdk "$@"; }
-ffmpeg() { docker compose run --rm ffmpeg "$@"; }
+# SVT_LOG=1: the AV1 encoder ignores ffmpeg's log level and prints its config unless told.
+ffmpeg() { docker compose run --rm -e SVT_LOG=1 ffmpeg "$@"; }
 
 ensure_dirs() {
   mkdir -p artifacts/build artifacts/plugin artifacts/dist artifacts/repo \
@@ -61,6 +62,9 @@ cmd_deploy() {
   info "Staging plugin into artifacts/plugin"
   cp "artifacts/build/$ASSEMBLY.dll" artifacts/plugin/
   cp "artifacts/build/$ASSEMBLY.pdb" artifacts/plugin/ 2>/dev/null || true
+  # Jellyfin writes meta.json here on first load and then reports the version from it, not from
+  # the DLL - so a version bump would keep showing the old version. Let it regenerate.
+  rm -f artifacts/plugin/meta.json
 
   if jellyfin_running; then
     info "Restarting jellyfin (plugins load only at startup)"
@@ -81,17 +85,30 @@ cmd_down() { docker compose down; }
 cmd_logs() { docker compose logs -f --tail=200 jellyfin; }
 
 # Clip with a large burned-in running clock, so any offset can be verified by eye.
+#   make_clip <path> <seconds> <label> <colour> <tone Hz> [size] [video args] [audio args]
+# Defaults: 640x360 H.264 + AAC, the format of the original test clips.
+H264="-c:v libx264 -preset ultrafast -crf 30 -pix_fmt yuv420p"
+HEVC="-c:v libx265 -preset ultrafast -crf 32 -pix_fmt yuv420p -x265-params log-level=error"
+AV1="-c:v libsvtav1 -preset 12 -crf 45 -pix_fmt yuv420p"
+XVID="-c:v mpeg4 -q:v 5 -vtag XVID"
+AAC="-c:a aac -b:a 64k"
+AC3="-c:a ac3 -b:a 192k"
+EAC3="-c:a eac3 -b:a 192k"
+
 make_clip() {
   local out="$1" seconds="$2" label="$3" colour="$4" freq="$5"
+  local size="${6:-640x360}" video="${7:-$H264}" audio="${8:-$AAC}"
   [[ -f "testdata/media/$out" ]] && { echo "    exists: $out"; return 0; }
   echo "    $out"
   local font=/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
+  local faststart=""
+  [[ "$out" == *.mp4 ]] && faststart="-movflags +faststart"
+  # shellcheck disable=SC2086  # the codec variables are deliberately word-split
   ffmpeg -y \
-    -f lavfi -i "color=c=${colour}:s=640x360:r=25:d=${seconds}" \
+    -f lavfi -i "color=c=${colour}:s=${size}:r=25:d=${seconds}" \
     -f lavfi -i "sine=frequency=${freq}:sample_rate=48000:duration=${seconds}" \
     -vf "drawtext=fontfile=${font}:text='${label}':fontsize=36:fontcolor=white:x=(w-tw)/2:y=60,drawtext=fontfile=${font}:text='%{pts\:hms}':fontsize=72:fontcolor=yellow:box=1:boxcolor=black@0.6:boxborderw=12:x=(w-tw)/2:y=(h-th)/2" \
-    -c:v libx264 -preset ultrafast -crf 30 -pix_fmt yuv420p \
-    -c:a aac -b:a 64k -movflags +faststart \
+    $video $audio $faststart \
     "/media/$out"
 }
 
@@ -113,6 +130,21 @@ cmd_media() {
       "Short Show S01E0$i" "${colours[$((i-1))]}" $((600 + i * 60))
   done
 
+  # Real libraries mix formats, even within one series (measured on the user's library: 31 of 46
+  # series switch codec between episodes). Played in order, each join tests one transition.
+  info "Generating 7 x 30 s episodes in different formats (mixed-format testing)"
+  local d="shows/Mixed Show/Season 01"
+  mkdir -p "testdata/media/$d"
+  make_clip "$d/Mixed Show - S01E01.mkv" 30 "S01E01 H264 AAC"          0x1f3a5f 700  640x360  "$H264" "$AAC"
+  make_clip "$d/Mixed Show - S01E02.mkv" 30 "S01E02 HEVC AAC"          0x5f1f3a 760  640x360  "$HEVC" "$AAC"
+  make_clip "$d/Mixed Show - S01E03.mkv" 30 "S01E03 H264 AC3"          0x1f5f3a 820  640x360  "$H264" "$AC3"
+  make_clip "$d/Mixed Show - S01E04.mkv" 30 "S01E04 AV1 AAC"           0x5f4a1f 880  640x360  "$AV1"  "$AAC"
+  make_clip "$d/Mixed Show - S01E05.avi" 30 "S01E05 XVID AC3 AVI"      0x3a1f5f 940  640x360  "$XVID" "$AC3"
+  make_clip "$d/Mixed Show - S01E06.mkv" 30 "S01E06 HEVC 720p EAC3"    0x1f5f5f 1000 1280x720 "$HEVC" "$EAC3"
+  # Same format as S01E01 at a different resolution: the loop's E07 -> E01 join is a resolution
+  # change with no codec change, which channels deliberately play straight through.
+  make_clip "$d/Mixed Show - S01E07.mkv" 30 "S01E07 H264 720p AAC"     0x5f5f1f 1060 1280x720 "$H264" "$AAC"
+
   info "Done. Run ./x init to set up the test server library."
 }
 
@@ -128,7 +160,11 @@ cmd_init() {
   jellyfin_running || die "test server is not running - ./x up"
   [[ -d testdata/media/shows ]] || die "no test media - ./x media"
 
-  docker compose run --rm -T sdk bash -s <<'EOF'
+  # Wait for as many episodes as there are video files, however many ./x media has produced.
+  local expected
+  expected=$(find testdata/media/shows -type f \( -name '*.mp4' -o -name '*.mkv' -o -name '*.avi' \) | wc -l)
+
+  EXPECTED="$expected" docker compose run --rm -T -e EXPECTED sdk bash -s <<'EOF'
 set -euo pipefail
 J=http://jellyfin:8096; H='Content-Type: application/json'
 AUTH='MediaBrowser Client="LinearTvDev", Device="dev", DeviceId="lineartv-dev", Version="1.0"'
@@ -180,18 +216,22 @@ if ! curl -sf "$J/Library/VirtualFolders" -H "$A" | jq -e '.[] | select(.Name=="
           {"Type":"Episode", "MetadataFetchers":[], "ImageFetchers":[]}
         ]
       }}'
+elif [ "$(curl -sf "$J/Items?Recursive=true&IncludeItemTypes=Episode" -H "$A" | jq .TotalRecordCount)" -lt "$EXPECTED" ]; then
+  # Real-time monitoring is off, so clips added by ./x media need an explicit scan.
+  echo "==> Scanning for new test media"
+  curl -sf -X POST "$J/Library/Refresh" -H "$A"
 fi
 
 # Items are indexed before they are probed, so RunTimeTicks is briefly null. Wait for both.
-echo "==> Waiting for scan and probe"
+echo "==> Waiting for scan and probe ($EXPECTED episodes)"
 for i in $(seq 1 90); do
   st=$(curl -sf "$J/Items?Recursive=true&IncludeItemTypes=Episode" -H "$A" \
        | jq -r '"\(.TotalRecordCount) \([.Items[] | select(.RunTimeTicks == null)] | length)"')
   set -- $st
-  [ "$1" -ge 12 ] && [ "$2" -eq 0 ] && break
+  [ "$1" -ge "$EXPECTED" ] && [ "$2" -eq 0 ] && break
   sleep 2
 done
-[ "$1" -ge 12 ] && [ "$2" -eq 0 ] || { echo "error: scan incomplete ($1 items, $2 unprobed)" >&2; exit 1; }
+[ "$1" -ge "$EXPECTED" ] && [ "$2" -eq 0 ] || { echo "error: scan incomplete ($1 of $EXPECTED items, $2 unprobed)" >&2; exit 1; }
 
 if ! curl -sf "$J/Auth/Keys" -H "$A" | jq -e '.Items[] | select(.AppName=="LinearTvDev")' >/dev/null; then
   curl -sf -X POST "$J/Auth/Keys?app=LinearTvDev" -H "$A"

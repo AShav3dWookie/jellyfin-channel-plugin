@@ -58,19 +58,38 @@ Follows [feasibility.md](./feasibility.md). Supersedes the concat/remux plan.
 >   no `-re`. That exposed Jellyfin's default `-analyzeduration 200M`, a 166 s wait on a paced
 >   input, so `AnalyzeDurationMs` = 5000. Direct route unchanged at ~1.2 s, which is Jellyfin's
 >   own remux start-up. Joins verified still continuous afterwards.
-> - **Known limit, deferred: channels mixing video formats (e.g. H.264 and HEVC).** Video is
->   copied, and the stream is described to Jellyfin from the programme on air at tune time. A
->   join into a different codec will *probably* break copy-based playback; this is untested,
->   since all test clips are H.264. **Parked until the user has tried a mixed channel on their
->   TV** (decision 2026-09-30); the TV reads MPEG-TS directly and may cope where browsers don't.
->   Options when it's picked up:
->   (1) keep channels single-format, with the settings page showing each channel's codec mix
->   and warning — never transcodes;
->   (2) transcode only non-matching programmes — which is a full re-encode of those, against
->   the project's aim;
->   (3) rely on clients that handle the switch.
->   First step: generate HEVC test clips and a channel alternating H.264 and HEVC, and observe
->   both playback routes at the join.
+> - **Known limit: channels mixing video formats. Tested 2026-10-01; option (a) below is now
+>   in, so streams stop cleanly instead of freezing**
+>   (`docs/testing.md`, channels test H, using the Mixed Show clips):
+>   - **Browser:** the picture freezes at the first format change. Jellyfin runs one ffmpeg per
+>     viewing, and its decoder is fixed at start. It's not a clean stop, so the user's
+>     "stops and needs restarting is fine for now" isn't met.
+>   - **Direct (TV):** untested on a TV. The stream announces every change, but always as PMT
+>     version 0, and a continuously running generic decoder ignored them. Every programme's data
+>     is intact, though: a decoder restarted anywhere decodes it.
+>   - **AV1:** no picture on any route. Jellyfin's TS remux turns AV1 into unrecognised
+>     `bin_data`. That's 16 episodes across 6 series in the user's library.
+>
+>   It's the normal case here, not an edge case: 31 of the user's 46 TV series mix codecs.
+>   Options, cheapest first:
+>   (a) **DONE (2026-10-01): end the stream cleanly at a format change**, so the client returns
+>   to the menu and re-tuning plays the new programme correctly. That's the "stops, restart it"
+>   behaviour the user accepted. "Format" means video codec plus audio codec, compared with the
+>   programme tuned in on. Resolution changes play through, which was tested. Unknown formats
+>   never stop a channel.
+>   Making the end prompt needed one more change: **channel streams are now served from the
+>   plugin's own endpoint**, `/LinearTv/Stream/{id}.ts` (`Api/ChannelStreamController`,
+>   `LiveTv/StreamRegistry`), not Jellyfin's `/LiveTv/LiveStreamFiles`. Jellyfin's endpoint
+>   wraps the stream in a `ProgressiveFileStream`, which keeps retrying for 30 s after the end.
+>   And jellyfin-web buffers only 6 s ahead in Chrome/Edge/Firefox on fast connections, so
+>   browsers would have held a frozen last frame for ~24 s. The new endpoint is anonymous like
+>   Jellyfin's, keyed by the stream's unguessable GUID, and exists only while the stream is open.
+>   (b) **Bump the PMT version number at each join** (and recompute its CRC) in `TsSplicer`.
+>   That makes each change standards-correct, so a TV player *may* switch decoders cleanly.
+>   Needs a real TV to judge.
+>   (c) **Exclude AV1 items** from channels, with a count on the settings page, or transcode them.
+>   (d) Transcode non-matching programmes: continuous everywhere, but a full re-encode of those.
+>   (e) Single-format channels only: impractical with this library.
 >
 > Code map: `Scheduling/` (pure: schedule, shuffle), `Library/ContentResolver.cs` (sources →
 > playable items), `LiveTv/` (the `ILiveTvService`; `LinearLiveStream`, `ChannelStream` and

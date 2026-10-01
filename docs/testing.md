@@ -47,6 +47,13 @@ the same media.
 | Short Show S01E04 | 30 s | `b088343523cf97ccbdc2a3744fe8f4fb` |
 | Short Show S01E05 | 30 s | `4b7bed30562981c3e4d55ea930121786` |
 | Short Show S01E06 | 30 s | `bd541ffcd3b466c856d95954dde798a0` |
+| Mixed Show S01E01 (H.264 · AAC · MKV) | 30 s | `b406b88fe29310989db6278a6769e50b` |
+| Mixed Show S01E02 (HEVC · AAC · MKV) | 30 s | `d0ab143e0a99f4ee757e7e7672be255a` |
+| Mixed Show S01E03 (H.264 · AC3 · MKV) | 30 s | `f86af165024fbefc1a6dd78edac3862d` |
+| Mixed Show S01E04 (AV1 · AAC · MKV) | 30 s | `496840668a6a5babb66737e598f88d3e` |
+| Mixed Show S01E05 (XviD · AC3 · AVI) | 30 s | `241d3d6fca92af5b547a8154e6c5e7d9` |
+| Mixed Show S01E06 (HEVC 720p · E-AC3 · MKV) | 30 s | `c42ca1b0e67d648c46c33912803b03c5` |
+| Mixed Show S01E07 (H.264 720p · AAC · MKV) | 30 s | `65818c61f38d9165488e95de6f534b61` |
 
 `./x init` prints this list too. If your IDs ever differ, trust its output.
 
@@ -331,6 +338,66 @@ tune-in point. Jellyfin's web player starts HLS from the beginning of the playli
 live edge, according to its code. **Worth confirming in a real browser:** if the picture
 starts noticeably *later* in the programme than the guide says, that assumption is wrong.
 
+### H. Mixed formats — the stream stops cleanly at a format change
+
+**Purpose:** real libraries mix formats, even within one series. Measured on the user's library,
+31 of 46 TV series switch codec between episodes. This test shows what a channel does at each
+change.
+
+`./x media` generates **Mixed Show**: seven 30-second episodes in different formats. Put it on
+a channel **in order** (channel **104 Mixed Formats** on the test server), so every join is a
+specific transition:
+
+| Episode | Video | Audio | Container | Join into it tests |
+|---|---|---|---|---|
+| S01E01 | H.264 360p | AAC | MKV | **resolution only**: H.264 720p → 360p, same format (wraps from E07) |
+| S01E02 | HEVC | AAC | MKV | H.264 → HEVC, the commonest switch in the user's TV library |
+| S01E03 | H.264 | AC3 | MKV | HEVC → H.264, with an audio codec change |
+| S01E04 | AV1 | AAC | MKV | → AV1 |
+| S01E05 | MPEG-4 (XviD) | AC3 | AVI | → XviD in AVI |
+| S01E06 | HEVC 1280×720 | E-AC3 | MKV | → HEVC with a resolution and audio change |
+| S01E07 | H.264 1280×720 | AAC | MKV | HEVC → H.264 |
+
+Each clip names its format on screen, so a frame grab shows what played.
+
+**Try it:** tune channel 104 and watch.
+- **Pass:** at a change of video or audio codec, the player stops within a second or two of the
+  programme ending and returns to the menu. Tune in again and the new programme plays. The
+  E07 → E01 join (resolution only) plays straight through without stopping.
+- **Fail:** a frozen picture, a garbled picture, or a long hold on the last frame before stopping.
+
+**Results after the fix, 2026-10-01:** the channel stream ends at the first programme whose
+video or audio codec differs from the one tuned in on (`ChannelStream`). It's served from the
+plugin's own endpoint, so the end reaches the player straight away.
+
+| | Before | After |
+|---|---|---|
+| Browser, at a codec change | picture frozen; 2,966 decoder errors | **clean end**: playlist marked ended 1.7 s after tuning, with the whole programme in it; 0 errors |
+| Direct, at a codec change | only matching programmes decoded | **clean end** 0.5 s after the last data |
+| Resolution-only change (H.264 720p → 360p) | — | **plays straight through**: three 1280×720 segments, then three 640×360; 0 errors |
+| Same-format channel (Quick Cuts) | plays through | still plays through: 4 programmes, 0 errors, still paced to real time |
+
+The 1.7 s and 0.5 s depend on the burst: the whole 30-second programme had already been
+delivered, so the end arrived at once. A long programme ends at its scheduled end.
+
+**Not verified in a real browser or on a TV:** whether the player redraws cleanly at the
+resolution-only join (server-side it's error-free), and what the player does on reaching the
+end. Earlier, the web client stopped and returned to the menu at a stream's end.
+
+**Still unfixed:** AV1 programmes have no picture (below). `docs/plan.md` option (c) covers
+excluding them.
+
+**History: before the fix (v0.1), this test failed.**
+
+| Route | What happens at a format change | Evidence |
+|---|---|---|
+| **Browser** | **The picture freezes.** It doesn't stop cleanly. | Jellyfin's ffmpeg sets up one video decoder when the stream starts and feeds every later programme into it: 2,966 decoder errors, output stuck at 25 s after 150 s of playback. The browser only ever saw the one programme matching that decoder. |
+| **Direct** (TV that plays MPEG-TS) | Probably garbled or frozen; **not yet tried on a TV** | The stream announces each change, but always as table-of-contents version 0, which players may ignore. A generic decoder decoded only the HEVC programmes: 1,498 of ~4,600 frames. The data for every programme is intact: a decoder started fresh at any point decodes that programme correctly. |
+| **AV1, any route** | **No picture at all** | Jellyfin's copy into MPEG-TS turns AV1 video into unrecognised data (`bin_data`); only the audio survives. H.264, HEVC and XviD all survive the same copy. |
+
+**Tuning in again always works**: a fresh tune sets everything up for the programme on air.
+The exception is AV1, which has no picture however you tune in.
+
 ---
 
 ## 2. Test: the toolchain builds and tests with no host SDK
@@ -389,7 +456,7 @@ API, never in a browser**. This is the one check here that has never been done.
 3. **Plugin list:** open http://localhost:8097/web/#/dashboard/plugins, or go through the menu:
    top-left ☰ → *Dashboard* → *Plugins*. Menu labels can vary slightly between Jellyfin
    versions; the direct link always works.
-   - **Pass:** *Linear TV* is listed, version **0.1.0.0**, not marked as failed or disabled.
+   - **Pass:** *Linear TV* is listed, version **0.2.0.0**, not marked as failed or disabled.
 4. **Settings page:** click *Linear TV*, or open
    http://localhost:8097/web/#/configurationpage?name=Linear%20TV
    - **Pass:** two sections. **Channels** lists the channels, with an *Add channel* button
@@ -415,7 +482,7 @@ API, never in a browser**. This is the one check here that has never been done.
 **Server-side cross-check:** `./x logs`, then Ctrl+C. Near start-up you should see:
 
 ```
-Loaded plugin: Linear TV 0.1.0.0
+Loaded plugin: Linear TV 0.2.0.0
 ```
 
 ---
@@ -568,12 +635,12 @@ and it must be the address the **NAS** uses to reach your PC, not `localhost`:
 
 ```bash
 rm -rf artifacts/repo artifacts/dist
-./x package 0.1.0.0 http://<pc-ip>:8098
+./x package 0.2.0.0 http://<pc-ip>:8098
 ```
 
 **Pass:** ends with
 `Serve artifacts/repo/ and add http://<pc-ip>:8098/manifest.json as a repository in Jellyfin`.
-The `rm` matters: without it you're adding 0.1.0.0 to a manifest that already has an entry
+The `rm` matters: without it you're adding 0.2.0.0 to a manifest that already has an entry
 for it, pointing at the old URL.
 
 **2. Serve the repository** from the SDK container. Leave it running:
@@ -599,12 +666,12 @@ Expect JSON beginning `[ { "guid": "437f1b36-…"`.
 **4. Install.**
 1. Open the catalogue: `http://<nas>:8096/web/#/dashboard/plugins/catalog`.
 2. Find **Linear TV**. Its category is set to Live TV in `build.yaml`, so look there, or use
-   the page's search/filter. Open it and choose **Install** for version 0.1.0.0.
-3. The Python server in step 2 should log a `GET /linear-tv/linear-tv_0.1.0.0.zip … 200`
+   the page's search/filter. Open it and choose **Install** for version 0.2.0.0.
+3. The Python server in step 2 should log a `GET /linear-tv/linear-tv_0.2.0.0.zip … 200`
    line. That's the NAS downloading the package.
 4. **Restart the NAS Jellyfin.** It's needed; plugins load only at start-up.
 
-**Pass:** after the restart, the NAS's *Dashboard → Plugins* lists **Linear TV 0.1.0.0** as
+**Pass:** after the restart, the NAS's *Dashboard → Plugins* lists **Linear TV 0.2.0.0** as
 active, and its settings page opens.
 
 You can stop the Python server (Ctrl+C) once it's installed. It's only needed while
@@ -701,14 +768,12 @@ Each of these was actually hit while building this, except where noted.
 
 ## Known gaps
 
-- **A channel that mixes video formats is untested and likely to have problems.** All the test
-  clips share one format (H.264, 640×360, 25 fps). A real library mixes H.264 and HEVC,
-  resolutions and frame rates. A channel's streams are described to Jellyfin from the
-  programme on air when it was tuned, and the video is copied, not converted. So when the
-  next programme is in a different codec, a browser may fail at that join. Resolution changes
-  within one codec may be tolerated. **Test with a channel built from your real library.**
-  The likely fix is to have Jellyfin transcode just the programmes that don't match the
-  channel's format, and copy the rest.
+- **A channel stops at each change of video or audio codec**, and you tune in again; it's no
+  longer a frozen picture. Resolution changes within a codec play through. With the user's
+  library, where 31 of 46 series mix codecs, these stops will be frequent. Continuous play
+  across codecs would need a TV that switches decoders cleanly (`docs/plan.md` option b) or
+  transcoding (option d). See channels test H.
+- **AV1 programmes have no picture**, on any client. Jellyfin can't copy AV1 into MPEG-TS.
 - **The guide doesn't update itself on library changes.** Add episodes to a channel's series
   and they join the schedule at the next guide refresh, which is daily, or when you next save
   the plugin settings. Tuning always uses the live library, so for a while the picture can
@@ -739,6 +804,7 @@ D Create channel       pass / fail   saved? ___  in guide without restart? ___  
 E No re-encode         pass / fail   reasons shown: ___   ffmpeg video: ___
 F Runs on             client: ___   next programme started? ___   visible glitch at the join? ___
 G Quick change         client: ___   seconds to picture: ___   started at the right point? ___
+H Mixed formats        client: ___   codec change: stops cleanly / freezes / garbled   720p→360p join: smooth? ___
 
 TOOLING
 2 Toolchain            pass / fail   notes:

@@ -2,7 +2,7 @@
 name: "Linear TV"
 guid: "437f1b36-c02d-4c02-9083-19440d7f243b"
 imageUrl: ""
-version: "0.1.0.0"
+version: "0.2.0.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 owner: "aaronhanna91"
@@ -16,7 +16,7 @@ category: "LiveTV"
 artifacts:
   - "Jellyfin.Plugin.LinearTv.dll"
 changelog: >
-  First release. Channels from series, collections or whole libraries, played in order or
-  shuffled, in the Live TV guide. Tune in part-way through a programme; programmes run on
-  into the next; about 2 seconds to change channel in a browser. Known limit: channels that
-  mix video formats (e.g. H.264 and HEVC) are untested and may fail where the format changes.
+  Channels that mix video formats now stop cleanly at a change of video or audio codec (e.g.
+  H.264 to HEVC) instead of freezing; tune in again to carry on. Resolution changes within a
+  codec play straight through. The end of a stream now reaches the player immediately, rather
+  than after a 30-second hold on the last frame. Known limit: AV1 programmes have no picture.

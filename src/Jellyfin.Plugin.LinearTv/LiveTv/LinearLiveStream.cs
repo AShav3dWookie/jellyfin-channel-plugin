@@ -13,7 +13,7 @@ namespace Jellyfin.Plugin.LinearTv.LiveTv;
 /// <para>
 /// <b>Continuity.</b> A plain remux URL ends when its programme ends, and clients then stop and
 /// return to the menu (observed in the web client). Instead, <see cref="MediaSourceInfo.Path"/>
-/// points at Jellyfin's own <c>/LiveTv/LiveStreamFiles/{UniqueId}/stream.ts</c>, which serves
+/// points at the plugin's <c>/LinearTv/Stream/{UniqueId}.ts</c>, which serves
 /// <see cref="GetStream"/>: a <see cref="ChannelStream"/> that runs on into each next programme.
 /// </para>
 /// <para>
@@ -39,16 +39,24 @@ internal sealed class LinearLiveStream : ILiveStream
 {
     private readonly Dictionary<MediaStream, bool> _trueInterlacing;
     private readonly Func<Stream> _openStream;
+    private readonly Action<LinearLiveStream>? _onClosed;
     private readonly List<Stream> _opened = [];
     private MediaSourceInfo _mediaSource;
+    private int _closed;
 
     /// <param name="mediaSource">The channel's source, as built for the current programme.</param>
     /// <param name="openStream">Opens a new continuous channel stream from the live position.</param>
     /// <param name="localBaseUrl">Jellyfin's own base URL, as reachable from inside its host.</param>
-    public LinearLiveStream(MediaSourceInfo mediaSource, Func<Stream> openStream, string localBaseUrl)
+    /// <param name="onClosed">Called once when the stream is closed or disposed.</param>
+    public LinearLiveStream(
+        MediaSourceInfo mediaSource, Func<Stream> openStream, string localBaseUrl, Action<LinearLiveStream>? onClosed = null)
     {
         _openStream = openStream;
-        mediaSource.Path = $"{localBaseUrl.TrimEnd('/')}/LiveTv/LiveStreamFiles/{UniqueId}/stream.ts";
+        _onClosed = onClosed;
+
+        // The plugin's own endpoint (Api/ChannelStreamController), not Jellyfin's LiveStreamFiles:
+        // that one holds a finished stream open for 30 s, which viewers saw as a frozen frame.
+        mediaSource.Path = $"{localBaseUrl.TrimEnd('/')}/LinearTv/Stream/{UniqueId}.ts";
         _mediaSource = mediaSource;
         // Keyed by reference: these exact objects are what Normalize() mutates.
         _trueInterlacing = mediaSource.MediaStreams
@@ -96,9 +104,9 @@ internal sealed class LinearLiveStream : ILiveStream
     }
 
     /// <summary>
-    /// A new continuous stream from the live position now. Called by Jellyfin's LiveStreamFiles
-    /// endpoint each time something reads <see cref="MediaSourceInfo.Path"/>, so every reader
-    /// joins at its own moment.
+    /// A new continuous stream from the live position now. Called by the plugin's stream endpoint
+    /// each time something reads <see cref="MediaSourceInfo.Path"/>, so every reader joins at its
+    /// own moment.
     /// </summary>
     public Stream GetStream()
     {
@@ -121,6 +129,11 @@ internal sealed class LinearLiveStream : ILiveStream
             }
 
             _opened.Clear();
+        }
+
+        if (Interlocked.Exchange(ref _closed, 1) == 0)
+        {
+            _onClosed?.Invoke(this);
         }
     }
 }

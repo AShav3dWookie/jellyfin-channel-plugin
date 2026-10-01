@@ -82,10 +82,76 @@ public class ChannelStreamTests
         }
     }
 
+    [Fact]
+    public async Task EndsCleanly_AtTheFirstVideoCodecChange()
+    {
+        var planner = new FakePlanner(firstOffset: 5, Programme('a', 0), Programme('b', 1), Programme('c', 2), Programme('d', 3))
+        {
+            Formats = { ['c'] = "hevc/aac" },
+        };
+        var server = new FakeServer(("a", "AAA"), ("b", "BB"), ("c", "CCC"), ("d", "DD"));
+
+        var output = await ReadAll(new ChannelStream(planner, server.Client, NullLogger.Instance, spliceTimestamps: false));
+
+        // Same-format programmes play through; the stream ends before c rather than feed a player
+        // set up for H.264 an HEVC programme. d is never reached.
+        Assert.Equal("AAABB", output);
+        Assert.Equal(["a@5", "b@0"], planner.Requested);
+    }
+
+    [Fact]
+    public async Task EndsCleanly_AtAnAudioCodecChange()
+    {
+        var planner = new FakePlanner(firstOffset: 0, Programme('a', 0), Programme('b', 1))
+        {
+            Formats = { ['b'] = "h264/ac3" },
+        };
+        var server = new FakeServer(("a", "AAA"), ("b", "BB"));
+
+        var output = await ReadAll(new ChannelStream(planner, server.Client, NullLogger.Instance, spliceTimestamps: false));
+
+        Assert.Equal("AAA", output);
+    }
+
+    [Fact]
+    public async Task AnUnknownFormat_NeverStopsTheChannel()
+    {
+        var planner = new FakePlanner(firstOffset: 0, Programme('a', 0), Programme('b', 1), Programme('c', 2))
+        {
+            Formats = { ['b'] = null },
+        };
+        var server = new FakeServer(("a", "AAA"), ("b", "BB"), ("c", "CCC"));
+
+        var output = await ReadAll(new ChannelStream(planner, server.Client, NullLogger.Instance, spliceTimestamps: false));
+
+        Assert.Equal("AAABBCCC", output);
+    }
+
+    [Fact]
+    public async Task TheTunedFormat_ComesFromTheFirstProgrammeThatActuallyOpened()
+    {
+        // a is HEVC but fails to open, so the player is set up by b, which is H.264.
+        var planner = new FakePlanner(firstOffset: 0, Programme('a', 0), Programme('b', 1), Programme('c', 2))
+        {
+            Formats = { ['a'] = "hevc/aac" },
+        };
+        var server = new FakeServer(("b", "BB"), ("c", "CCC"));
+
+        var output = await ReadAll(new ChannelStream(planner, server.Client, NullLogger.Instance, spliceTimestamps: false));
+
+        Assert.Equal("BBCCC", output);
+    }
+
     /// <summary>A schedule of fixed programmes, played in order.</summary>
     private sealed class FakePlanner(long firstOffset, params ScheduledProgram[] programmes) : IChannelPlanner
     {
+        /// <summary>Gets formats by programme name; anything not listed is "h264/aac".</summary>
+        public Dictionary<char, string?> Formats { get; } = [];
+
         public List<string> Requested { get; } = [];
+
+        public string? FormatOf(Guid itemId)
+            => Formats.TryGetValue(itemId.ToString("N")[0], out var format) ? format : "h264/aac";
 
         public string ChannelName => "Test";
 

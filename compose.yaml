@@ -31,8 +31,9 @@ services:
       - ./testdata/jellyfin/config:/config
       - ./testdata/jellyfin/cache:/cache
       - ./testdata/media:/media:ro
-      # Only the shipped DLL + PDB live here (see ./x deploy). No version in the folder name:
-      # Jellyfin reads the version from the plugin, so version bumps need no change here.
+      # Only the shipped DLL + PDB live here (see ./x deploy). No version in the folder name, so
+      # version bumps need no change here; ./x deploy clears the meta.json Jellyfin caches the
+      # version in.
       - ./artifacts/plugin:/config/plugins/LinearTv
 
   # Test media generator. Reuses the Jellyfin image's own ffmpeg, which ships drawtext,

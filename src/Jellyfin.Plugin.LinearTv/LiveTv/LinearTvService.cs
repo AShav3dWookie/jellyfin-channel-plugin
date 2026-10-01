@@ -30,6 +30,7 @@ internal sealed class LinearTvService(
     IMediaSourceManager mediaSources,
     IServerApplicationHost appHost,
     IHttpClientFactory httpClientFactory,
+    StreamRegistry streams,
     TimeProvider time,
     ILogger<LinearTvService> logger) : ILiveTvService, ISupportsDirectStreamProvider
 {
@@ -85,7 +86,9 @@ internal sealed class LinearTvService(
         var source = await CreateMediaSourceAsync(channelId).ConfigureAwait(false);
         var planner = new Planner(this, FindChannel(channelId)!, content, apiKeys);
 
-        return new LinearLiveStream(source, OpenStream, LocalBaseUrl);
+        var liveStream = new LinearLiveStream(source, OpenStream, LocalBaseUrl, streams.Remove);
+        streams.Add(liveStream);
+        return liveStream;
 
         Stream OpenStream()
         {
@@ -204,12 +207,7 @@ internal sealed class LinearTvService(
     /// </summary>
     private (List<MediaStream> Streams, int? AudioIndex) RemuxedStreams(BaseItem item)
     {
-        var source = mediaSources.GetStaticMediaSources(item, false, null).FirstOrDefault();
-        var all = source?.MediaStreams ?? [];
-
-        var video = all.FirstOrDefault(s => s.Type == MediaStreamType.Video);
-        var audio = all.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.IsDefault)
-            ?? all.FirstOrDefault(s => s.Type == MediaStreamType.Audio);
+        var (video, audio) = PlayedStreams(item);
 
         var streams = new List<MediaStream>();
         int? audioIndex = null;
@@ -233,6 +231,28 @@ internal sealed class LinearTvService(
         }
 
         return (streams, audioIndex);
+    }
+
+    /// <summary>
+    /// The streams a remux of this item carries: the first video, and the default (else first)
+    /// audio. The declared streams and the format comparison both use this, so they agree.
+    /// </summary>
+    private (MediaStream? Video, MediaStream? Audio) PlayedStreams(BaseItem item)
+    {
+        var all = mediaSources.GetStaticMediaSources(item, false, null).FirstOrDefault()?.MediaStreams ?? [];
+        var video = all.FirstOrDefault(s => s.Type == MediaStreamType.Video);
+        var audio = all.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.IsDefault)
+            ?? all.FirstOrDefault(s => s.Type == MediaStreamType.Audio);
+        return (video, audio);
+    }
+
+    /// <summary>Video and audio codec, e.g. "h264/aac"; null when there's no video information.</summary>
+    private string? FormatOf(BaseItem item)
+    {
+        var (video, audio) = PlayedStreams(item);
+        return video?.Codec is { Length: > 0 } videoCodec
+            ? $"{videoCodec}/{audio?.Codec ?? "none"}".ToLowerInvariant()
+            : null;
     }
 
     private ProgramInfo ToProgramInfo(ChannelDefinition channel, ScheduledProgram slot)
@@ -312,5 +332,8 @@ internal sealed class LinearTvService(
 
         public string Describe(Guid itemId)
             => content.GetItem(itemId) is { } item ? LinearTvService.Describe(item) : itemId.ToString("N");
+
+        public string? FormatOf(Guid itemId)
+            => content.GetItem(itemId) is { } item ? service.FormatOf(item) : null;
     }
 }
