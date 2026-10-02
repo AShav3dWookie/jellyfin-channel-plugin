@@ -30,13 +30,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public int JoinThresholdMinutes { get; set; } = 5;
 
-    /// <summary>
-    /// Gets or sets how many hours of guide to publish ahead of now.
-    /// </summary>
-    /// <remarks>
-    /// Must comfortably exceed the guide refresh interval (Jellyfin's default is 24 hours), or
-    /// the guide runs nearly dry just before each refresh. Only affects what the guide shows:
-    /// tuning always computes the live schedule directly.
-    /// </remarks>
-    public int ScheduleHorizonHours { get; set; } = 48;
+    // ScheduleHorizonHours (to 0.3) is gone: the guide now covers whatever range Jellyfin asks
+    // for. Saved settings that still contain it load fine; the XML serializer skips unknown
+    // elements.
 }

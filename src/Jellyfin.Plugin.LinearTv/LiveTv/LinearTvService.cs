@@ -60,23 +60,42 @@ internal sealed class LinearTvService(
             return Task.FromResult(Enumerable.Empty<ProgramInfo>());
         }
 
-        // Publish no further ahead than the configured horizon. The guide is display only;
-        // tuning always computes the live schedule directly.
-        var horizon = time.GetUtcNow().UtcDateTime.AddHours(Math.Max(1, Config.ScheduleHorizonHours));
-        var end = endDateUtc < horizon ? endDateUtc : horizon;
-
         var entries = content.Resolve(channel);
-        var programmes = ChannelSchedule
-            .Between(channel.Id, entries, channel.Shuffle, startDateUtc, end)
+        var programmes = GuideSlots(channel.Id, entries, channel.Shuffle, startDateUtc, endDateUtc)
             .Select(slot => ToProgramInfo(channel, slot))
             .ToList();
 
-        logger.LogDebug(
-            "Guide for {Channel}: {Count} programmes from {Items} items",
-            channel.Name, programmes.Count, entries.Count);
+        if (programmes.Count == MaxGuideProgrammes)
+        {
+            logger.LogInformation(
+                "Guide for {Channel} stops at {Count} programmes, before {End:u}: its programmes are short",
+                channel.Name, programmes.Count, endDateUtc);
+        }
+        else
+        {
+            logger.LogDebug(
+                "Guide for {Channel}: {Count} programmes from {Items} items",
+                channel.Name, programmes.Count, entries.Count);
+        }
 
         return Task.FromResult<IEnumerable<ProgramInfo>>(programmes);
     }
+
+    /// <summary>Most programmes one channel publishes per guide refresh.</summary>
+    /// <remarks>
+    /// Four weeks of two-hour films, so channels of normal programmes never reach it; it bounds
+    /// channels of very short ones (a week of 30-second clips is 20,160 programmes).
+    /// </remarks>
+    internal const int MaxGuideProgrammes = 3000;
+
+    /// <summary>
+    /// The guide for one channel: the range Jellyfin asks for, which its own "guide days" setting
+    /// controls (7 days by default, 14 at most), up to <see cref="MaxGuideProgrammes"/>. The guide
+    /// is display only; tuning always computes the live schedule directly.
+    /// </summary>
+    internal static IEnumerable<ScheduledProgram> GuideSlots(
+        string channelId, IReadOnlyList<ScheduleEntry> entries, bool shuffle, DateTime startUtc, DateTime endUtc)
+        => ChannelSchedule.Between(channelId, entries, shuffle, startUtc, endUtc).Take(MaxGuideProgrammes);
 
     // Called when a client actually tunes in. Jellyfin prefers this over GetChannelStream
     // because the service implements ISupportsDirectStreamProvider.

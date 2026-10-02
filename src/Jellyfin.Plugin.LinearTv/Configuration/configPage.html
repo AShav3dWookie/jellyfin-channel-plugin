@@ -98,16 +98,10 @@
                     </div>
                 </div>
 
-                <div class="inputContainer">
-                    <label class="inputLabel inputLabelUnfocused" for="ScheduleHorizonHours">
-                        Guide horizon (hours)
-                    </label>
-                    <input is="emby-input" type="number" id="ScheduleHorizonHours"
-                           name="ScheduleHorizonHours" min="25" max="336" />
-                    <div class="fieldDescription">
-                        How far ahead the guide shows. Keep it above 24: the guide refreshes daily.
-                    </div>
-                </div>
+                <p class="fieldDescription">
+                    How far ahead the guide shows is Jellyfin's own setting: Dashboard → Live TV →
+                    guide data days (7 by default, 14 at most).
+                </p>
 
                 <div class="inputContainer">
                     <label class="inputLabel inputLabelUnfocused" for="ScheduleTimeZone">
@@ -363,7 +357,6 @@
                 Promise.all([ApiClient.getPluginConfiguration(pluginId), loadSources()]).then(function (r) {
                     var config = r[0];
                     $('#JoinThresholdMinutes').value = config.JoinThresholdMinutes;
-                    $('#ScheduleHorizonHours').value = config.ScheduleHorizonHours;
                     $('#ScheduleTimeZone').value = config.ScheduleTimeZone || '';
                     renderChannels(config);
                     Dashboard.hideLoadingMsg();
@@ -377,7 +370,6 @@
                 e.preventDefault();
                 saveConfig(function (config) {
                     config.JoinThresholdMinutes = parseInt($('#JoinThresholdMinutes').value, 10) || 0;
-                    config.ScheduleHorizonHours = parseInt($('#ScheduleHorizonHours').value, 10) || 48;
                     config.ScheduleTimeZone = $('#ScheduleTimeZone').value.trim();
                     return null;
                 });

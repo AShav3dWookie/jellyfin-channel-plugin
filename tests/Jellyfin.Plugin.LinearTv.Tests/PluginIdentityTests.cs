@@ -54,8 +54,5 @@ public class PluginIdentityTests
         Assert.Equal(string.Empty, config.ScheduleTimeZone);
         Assert.Equal(5, config.JoinThresholdMinutes);
         Assert.Empty(config.Channels);
-
-        // Must exceed Jellyfin's 24h guide refresh, or the guide runs dry before each refresh.
-        Assert.True(config.ScheduleHorizonHours > 24);
     }
 }

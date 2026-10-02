@@ -37,7 +37,10 @@ Follows [feasibility.md](./feasibility.md). Supersedes the concat/remux plan.
 >   probe per channel, which is wrong for mixed-format channels.
 > - **`ScheduleRetentionDays` was removed**: nothing is stored, so there is nothing to prune.
 >   The guide horizon default rose from 24 to 48 hours, because Jellyfin refreshes the guide
->   every 24.
+>   every 24. **Superseded in 0.4: the horizon setting is gone.** The guide covers the range
+>   Jellyfin asks for (its own *guide data days*, 7 by default, 14 at most). 48 hours had
+>   ended the guide after two days. A cap of 3,000 programmes per channel per refresh bounds
+>   channels of very short programmes.
 >
 > - **§5.2 decided: channels are continuous, and the plugin now carries the bytes.** This
 >   overturns "the plugin serves no media" above. One stream per programme ended at the

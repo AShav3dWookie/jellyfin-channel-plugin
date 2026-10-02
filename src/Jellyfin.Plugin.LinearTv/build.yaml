@@ -2,7 +2,7 @@
 name: "Linear TV"
 guid: "437f1b36-c02d-4c02-9083-19440d7f243b"
 imageUrl: ""
-version: "0.3.0.0"
+version: "0.4.0.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 owner: "aaronhanna91"
@@ -16,10 +16,7 @@ category: "LiveTV"
 artifacts:
   - "Jellyfin.Plugin.LinearTv.dll"
 changelog: >
-  Channels can now be imported and exported as JSON, so they can be written outside Jellyfin
-  (by hand, by script, or by an AI given a list of the library) and loaded without restarting.
-  POST /LinearTv/Channels/Import and GET /LinearTv/Channels/Export are for administrators only.
-  Content is named by title and year, or by series, season and episode, so a file works on any
-  server. Matching forgives case, punctuation, accents and a year off by one; anything
-  ambiguous or missing is refused with suggestions. Imports are all or nothing, can be dry
-  runs, and either merge by channel number or replace the whole list.
+  The guide now runs as far ahead as Jellyfin asks: its own guide-days setting (Dashboard,
+  Live TV), 7 days by default and 14 at most. Before, it stopped after two days. The plugin's
+  Guide horizon setting is gone; saved settings that still contain it load fine. Channels of
+  very short programmes publish at most 3,000 programmes per guide refresh.

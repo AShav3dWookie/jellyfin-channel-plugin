@@ -165,10 +165,21 @@ If you've reset the test server since, they're gone. Create them again in part D
 - Each has a filled guide. Clock TV shows *Clock Show* episodes on the hour and half-hour,
   in order: S01E01, S01E02, … S01E06, then back to S01E01.
 - Times are shown in *your* timezone.
+- **The guide runs a week ahead**, or as many days as Jellyfin's *Dashboard → Live TV →
+  guide data days* says (7 by default, 14 at most). Before 0.4 it stopped after 2 days.
 
 Verified from the server side: all three channels are listed, the guide has programmes, and
 Clock TV's slots run S01E03 → S01E04 → S01E05 → S01E06 on the half-hour. **Not yet looked
 at in a browser.**
+
+**Guide length, verified 2026-10-02 (0.4):** Jellyfin asked for 7 days, and Clock TV and
+Everything ran to 9 October, a week out. Before, the plugin cut every request at 48 hours,
+which on the NAS ended the Spielberg guide on the Sunday. The 30-second-clip channels stop at
+3,000 programmes (about a day), which the log reports as *Guide for … stops at 3000
+programmes*. On this test server the first refresh after the change took over 20 minutes,
+because Jellyfin deleted thousands of old clip programmes at about 2 per second from a
+database on a Windows folder shared into Docker. Real channels of normal programmes need about
+80–500 programmes a week.
 
 ### B. Tune in part-way through
 
@@ -580,8 +591,9 @@ API, never in a browser**. This is the one check here that has never been done.
 4. **Settings page:** click *Linear TV*, or open
    http://localhost:8097/web/#/configurationpage?name=Linear%20TV
    - **Pass:** two sections. **Channels** lists the channels, with an *Add channel* button
-     (the channels test covers these). **Settings** has three fields: *Join threshold
-     (minutes)*, *Guide horizon (hours)*, *Schedule timezone*.
+     (the channels test covers these). **Settings** has two fields, *Join threshold
+     (minutes)* and *Schedule timezone*, and a note that the guide length is Jellyfin's own
+     setting. Until 0.3 there was also *Guide horizon (hours)*.
 5. **Save and persist:**
    1. Set *Join threshold* to `9` and *Schedule timezone* to `Europe/London`.
    2. Click **Save settings**. Jellyfin normally shows a brief confirmation; the reload in the
@@ -911,10 +923,10 @@ Each of these was actually hit while building this, except where noted.
   date, so adding or removing an episode moves everything after it, including what's on
   right now. A deliberate simplification for the first version; `docs/plan.md` §4.1 describes
   the stored-timeline alternative.
-- **The Quick Cuts guide stores fewer programmes than expected**: 3,001, against the 5,760 a
-  48-hour horizon of 30-second clips implies. The cause hasn't been investigated; a limit on
-  Jellyfin's side is one possibility. Channels with normal-length programmes aren't close to
-  that count.
+- **Channels of very short programmes have a shorter guide.** Each channel publishes at most
+  3,000 programmes per guide refresh: about a day of 30-second clips, or four weeks of films.
+  (0.3 and earlier saw Jellyfin store 3,001 of the 5,760 a 48-hour horizon implied for Quick
+  Cuts. That was never explained, and the cap now keeps under it.)
 
 ---
 
