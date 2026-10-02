@@ -2,7 +2,7 @@
 # Single entry point for development. Requires only Docker - no host SDK, no host tools.
 # Works in Git Bash on Windows and natively on Linux (including the NAS).
 #
-#   ./x build | test | deploy | up | down | logs | media | init | mirror | channels | spike1 | package | shell
+#   ./x build | test | deploy | up | down | logs | media | init | mirror | channels | spike1 | package | release | shell
 #
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -372,6 +372,53 @@ cmd_package() {
 # Channel files against a live server (test, or the NAS with --nas). See tools/channels.sh.
 cmd_channels() { sdk bash tools/channels.sh "$@"; }
 
+# Publishes the plugin as a GitHub release that Jellyfin installs and updates from. Add this as
+# a repository in Jellyfin once; it never changes:
+#   https://github.com/AShav3dWookie/jellyfin-channel-plugin/releases/latest/download/manifest.json
+# Each release carries the zip and a manifest listing every version so far: the previous
+# release's manifest, extended. The version comes from build.yaml, and the zip is built only if
+# the plugin source matches its tag (0.3.0.0 -> v0.3), so a release is exactly what was tagged.
+# Needs the GitHub CLI, logged in.
+GH_REPO=AShav3dWookie/jellyfin-channel-plugin
+cmd_release() {
+  local gh version tag zip notes
+  gh="$(command -v gh || true)"
+  [[ -n "$gh" || ! -x "/c/Program Files/GitHub CLI/gh.exe" ]] || gh="/c/Program Files/GitHub CLI/gh.exe"
+  [[ -n "$gh" ]] || die "the GitHub CLI (gh) is needed for releases"
+
+  version="$(sed -n 's/^version: "\(.*\)"/\1/p' "$PROJECT/build.yaml")"
+  tag="v${version%.0.0}"
+  git rev-parse -q --verify "refs/tags/$tag" >/dev/null || die "no tag $tag: commit and tag the release first"
+  git ls-remote --exit-code --tags origin "$tag" >/dev/null || die "tag $tag isn't pushed: git push origin $tag"
+  git diff --quiet "$tag" -- "$PROJECT" || die "$PROJECT differs from $tag: release only what was tagged"
+  ! "$gh" release view "$tag" -R "$GH_REPO" >/dev/null 2>&1 || die "release $tag already exists"
+
+  rm -rf artifacts/release && mkdir -p artifacts/release/repo
+  info "Building $version"
+  sdk jprm --verbosity=info plugin build "$PROJECT" --output=artifacts/release --version="$version"
+  zip="$(ls artifacts/release/*.zip 2>/dev/null | head -n1)"
+  [[ -n "$zip" ]] || die "jprm produced no zip"
+
+  if "$gh" release download -R "$GH_REPO" --pattern manifest.json --dir artifacts/release/repo 2>/dev/null; then
+    info "Extending the previous release's manifest"
+  else
+    info "First release: new manifest"
+    sdk jprm repo init artifacts/release/repo
+  fi
+  # --plugin-url: the zip is served from this release, not from a copy beside the manifest.
+  sdk jprm --verbosity=info repo add \
+    --plugin-url="https://github.com/$GH_REPO/releases/download/$tag/$(basename "$zip")" \
+    artifacts/release/repo "$zip"
+
+  notes="$(sed -n '/^changelog: >/,$p' "$PROJECT/build.yaml" | tail -n +2 | sed 's/^  //' | tr '\n' ' ')
+
+**Install:** in Jellyfin, *Dashboard → Plugins → Repositories → +*, add
+\`https://github.com/$GH_REPO/releases/latest/download/manifest.json\`, then install *Linear TV* from the catalogue and restart Jellyfin. Requires Jellyfin 12.1 or later."
+  info "Publishing release $tag"
+  "$gh" release create "$tag" -R "$GH_REPO" --verify-tag --title "Linear TV $tag" --notes "$notes" \
+    "$zip" artifacts/release/repo/manifest.json
+}
+
 cmd_shell() { sdk bash; }
 
 usage() {
@@ -388,6 +435,7 @@ usage: ./x <command>
   channels [--nas] <cmd>       library, list, backup, check, import, restore (help: ./x channels)
   spike1 <itemId> [secs]       does a copy remux honour startTimeTicks?
   package <version> <repoUrl>  release zip + manifest.json for the NAS
+  release                      publish build.yaml's version as a GitHub release (needs gh)
   shell                        shell in the SDK container
 
 First run:  ./x media && ./x deploy && ./x init
@@ -398,7 +446,7 @@ EOF
 
 command="${1:-}"; shift || true
 case "$command" in
-  build|test|deploy|up|down|logs|media|init|mirror|channels|spike1|package|shell) "cmd_$command" "$@" ;;
+  build|test|deploy|up|down|logs|media|init|mirror|channels|spike1|package|release|shell) "cmd_$command" "$@" ;;
   ""|-h|--help|help) usage ;;
   *) usage; exit 1 ;;
 esac

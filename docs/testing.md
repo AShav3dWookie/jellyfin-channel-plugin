@@ -743,6 +743,15 @@ or **transcoding**. Note which.
 
 ## 8. Test: release package and installation on the NAS
 
+> **Releases now come from GitHub (since v0.3).** `./x release` publishes the version in
+> `build.yaml` as a GitHub release, built from its tag. Add this repository in Jellyfin once:
+> `https://github.com/AShav3dWookie/jellyfin-channel-plugin/releases/latest/download/manifest.json`.
+> Then install *Linear TV* from the catalogue and restart; later versions arrive as normal
+> plugin updates. To release: bump `build.yaml` and the `.csproj`, commit, tag `vX.Y`, push
+> the tag, then run `./x release`. Verified for v0.3: the manifest and zip download without
+> logging in, and the checksum matches. The steps below serve a release from this PC instead,
+> which is still useful for trying a build on the NAS before tagging it.
+
 **Purpose:** proves the release path from start to finish: build a versioned zip and manifest,
 serve them, and install through Jellyfin's own plugin catalogue. **Not yet run** against the NAS.
 
