@@ -62,9 +62,11 @@ mkdir -p "$DIR/checked"
 api() { curl -sS -H "Authorization: MediaBrowser Token=\"$KEY\"" "$@"; }
 
 # Fails early, with a reason, rather than letting a later command produce a confusing report.
+# `preflight library` needs only Jellyfin itself: a library can be read before the plugin is in.
 preflight() {
-  local code
-  code=$(api -m 15 -o /dev/null -w '%{http_code}' "$URL/LinearTv/Channels/Export") \
+  local code path=/LinearTv/Channels/Export
+  [[ "${1:-}" == library ]] && path=/Library/VirtualFolders
+  code=$(api -m 15 -o /dev/null -w '%{http_code}' "$URL$path") \
     || die "cannot reach $URL"
   case "$code" in
     200) ;;
@@ -125,9 +127,11 @@ need_file() { [[ -n "${1:-}" && -f "$1" ]] || die "no such file: ${1:-<missing>}
 
 case "$cmd" in
   library)
-    preflight
+    preflight library
     info "Reading the library on $URL"
-    api -f "$URL/Items?Recursive=true&IncludeItemTypes=Movie,Series,BoxSet&IsMissing=false&Fields=ProductionYear,Genres,OfficialRating,ProviderIds,RecursiveItemCount,ChildCount&EnableImages=false&EnableUserData=false" \
+    # CollapseBoxSetItems=false: with "group movies into collections" on, Jellyfin otherwise
+    # hides every film that belongs to a collection inside it.
+    api -f "$URL/Items?Recursive=true&IncludeItemTypes=Movie,Series,BoxSet&IsMissing=false&CollapseBoxSetItems=false&Fields=ProductionYear,Genres,OfficialRating,ProviderIds,RecursiveItemCount,ChildCount&EnableImages=false&EnableUserData=false" \
       | jq -c '.Items[] | {
           type: ({"Movie":"movie","Series":"series","BoxSet":"collection"}[.Type]),
           title: .Name,
