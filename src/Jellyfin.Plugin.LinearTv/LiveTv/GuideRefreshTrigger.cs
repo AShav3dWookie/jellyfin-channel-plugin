@@ -46,15 +46,14 @@ internal sealed class GuideRefreshTrigger(ITaskManager taskManager, ILogger<Guid
             return;
         }
 
-        if (worker.State != TaskState.Idle)
-        {
-            logger.LogInformation("Guide refresh already running; channel changes may need another save or the next refresh");
-            return;
-        }
-
-        logger.LogInformation("Settings saved: refreshing the Live TV guide");
-        _ = taskManager.Execute(worker, new TaskOptions()).ContinueWith(
-            t => logger.LogError(t.Exception, "Guide refresh after save failed"),
-            TaskContinuationOptions.OnlyOnFaulted);
+        // Queued rather than executed: if a refresh is already running (say, from the previous
+        // save of several in a row), Jellyfin runs this one when it finishes. Executing a running
+        // task does nothing, so a save landing mid-refresh used to wait for the daily refresh.
+        // Repeat requests while one is queued are merged by Jellyfin.
+        logger.LogInformation(
+            worker.State == TaskState.Idle
+                ? "Settings saved: refreshing the Live TV guide"
+                : "Settings saved: guide refresh queued behind the one running");
+        taskManager.QueueScheduledTask(worker.ScheduledTask, new TaskOptions());
     }
 }
