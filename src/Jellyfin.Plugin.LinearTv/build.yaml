@@ -19,4 +19,5 @@ changelog: >
   The guide now runs as far ahead as Jellyfin asks: its own guide-days setting (Dashboard,
   Live TV), 7 days by default and 14 at most. Before, it stopped after two days. The plugin's
   Guide horizon setting is gone; saved settings that still contain it load fine. Channels of
-  very short programmes publish at most 3,000 programmes per guide refresh.
+  very short programmes publish at most 3,000 programmes per guide refresh. Saving channels while
+  the guide is refreshing no longer loses the change: the refresh is queued and runs next.
