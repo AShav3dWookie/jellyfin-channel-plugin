@@ -624,15 +624,17 @@ store_api() {
 }
 
 # Copies a build folder with its manifest last: until the manifest is there, the plugin ignores it.
-# robocopy on Windows: restartable per file over SMB. rsync elsewhere.
+# robocopy on Windows, rsync elsewhere. Not robocopy's restartable mode (/Z): it checkpoints so
+# often that it copied at 4.8 MB/s against 105 MB/s plain over gigabit (measured 2026-10-25).
+# An interrupted copy restarts that file instead; channels over 100 hours are in hour-long files.
 copy_build() {
   local src="$1" dest="$2" rc=0
   if [[ -x /c/Windows/System32/robocopy.exe ]]; then
     local robocopy=(/c/Windows/System32/robocopy.exe "$(native_path "$src")" "$(native_path "$dest")")
-    "${robocopy[@]}" /E /Z /R:5 /W:10 /NP /NDL /NJH /NJS /XF channel.json || rc=$?
+    "${robocopy[@]}" /E /R:5 /W:10 /NP /NDL /NJH /NJS /XF channel.json || rc=$?
     [[ $rc -lt 8 ]] || die "copy to $dest failed (robocopy exit $rc)"
     rc=0
-    "${robocopy[@]}" channel.json /Z /R:5 /W:10 /NP /NDL /NJH /NJS || rc=$?
+    "${robocopy[@]}" channel.json /R:5 /W:10 /NP /NDL /NJH /NJS || rc=$?
     [[ $rc -lt 8 ]] || die "copy of $dest/channel.json failed (robocopy exit $rc)"
   else
     rsync -a --partial --exclude channel.json "$src/" "$dest/"
