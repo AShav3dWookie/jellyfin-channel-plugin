@@ -22,8 +22,9 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<StreamRegistry>();
 
         // Jellyfin's LiveTvManager takes IEnumerable<ILiveTvService>; this adds ours alongside
-        // the built-in one rather than replacing it.
-        serviceCollection.AddSingleton<ILiveTvService, LinearTvService>();
+        // the built-in one rather than replacing it. One instance, which the IPTV endpoints also use.
+        serviceCollection.AddSingleton<LinearTvService>();
+        serviceCollection.AddSingleton<ILiveTvService>(services => services.GetRequiredService<LinearTvService>());
 
         // One instance: a hosted service (refresh on settings save) that the store endpoint also asks.
         serviceCollection.AddSingleton<GuideRefreshTrigger>();

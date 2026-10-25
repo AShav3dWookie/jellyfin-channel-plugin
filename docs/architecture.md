@@ -195,6 +195,27 @@ The store endpoint (`GET /LinearTv/Store`, `POST /LinearTv/Store/Refresh`, admin
 only) lists what the plugin found and rescans after publishing. A rescan also happens at every
 guide refresh.
 
+### IPTV apps
+
+Jellyfin's clients have no one-press channel change: jellyfin-web (the LG app) maps CH+/CH− to
+chapters, and the Android TV app has a channel picker rather than channel up/down. IPTV apps
+do, so the plugin also publishes the channels the way they read them (added 2026-10-25):
+
+| | |
+|---|---|
+| `GET /LinearTv/Iptv/channels.m3u` | M3U playlist in channel number order, the guide's address in its header (`url-tvg`) |
+| `GET /LinearTv/Iptv/guide.xml` | XMLTV guide, 3 hours back to 7 days ahead; ids match the playlist's `tvg-id` |
+| `GET /LinearTv/Iptv/{id}.ts` | The channel from the live position: the same stream Live TV plays |
+
+Any Jellyfin user token or API key works, passed as `?ApiKey=` (the query parameter Jellyfin 12
+accepts without legacy authorization); the playlist puts the key that fetched it into every
+URL. In the app, the only address to enter is
+`http://<nas>:8096/LinearTv/Iptv/channels.m3u?ApiKey=<key>`.
+
+The stream bypasses Jellyfin's playback pipeline entirely: no session, no transcoding. The app
+must decode H.265 and AAC itself, which any TV app made in the last several years does. Jellyfin's
+dashboard doesn't show these viewers.
+
 ## Workflow
 
 ```bash

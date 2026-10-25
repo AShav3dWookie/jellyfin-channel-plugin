@@ -2,7 +2,7 @@
 name: "Linear TV"
 guid: "437f1b36-c02d-4c02-9083-19440d7f243b"
 imageUrl: ""
-version: "1.0.1.0"
+version: "1.0.2.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 owner: "aaronhanna91"
@@ -17,9 +17,7 @@ category: "LiveTV"
 artifacts:
   - "Jellyfin.Plugin.LinearTv.dll"
 changelog: >
-  Channels now direct-play in the LG webOS app and other clients built on jellyfin-web: they
-  were given Jellyfin's address from inside its host (in Docker, a container address no other
-  device can reach) and span forever. Each client now gets the address it reached Jellyfin by.
-  Tuning straight after a Jellyfin restart, before the first guide refresh, no longer fails. The
-  join threshold now defaults to 0: tuning in always joins where the broadcast is, end credits
-  included, like real TV.
+  Channels for IPTV apps, for one-press channel up/down: an M3U playlist at
+  /LinearTv/Iptv/channels.m3u?ApiKey=<key>, with an XMLTV guide a week ahead and each channel's
+  stream at a fixed address. Point an IPTV app (such as webOS IPTV Player on an LG TV) at the
+  playlist; it plays the channels directly, with no transcoding, alongside Live TV.

@@ -48,7 +48,7 @@ internal sealed class LinearTvService(
     // Jellyfin asks for the channel list at every guide refresh: the store is rescanned then, so
     // newly published channels appear with the guide.
     public Task<IEnumerable<ChannelInfo>> GetChannelsAsync(CancellationToken cancellationToken)
-        => Task.FromResult(store.Refresh(Config.StorePath).Select(c => new ChannelInfo
+        => Task.FromResult(Channels().Select(c => new ChannelInfo
         {
             Id = c.Id,
             Name = c.Manifest.Name,
@@ -182,16 +182,19 @@ internal sealed class LinearTvService(
             ? $"{request.Scheme}://{request.Host}{request.PathBase}"
             : null;
 
+    /// <summary>The channels in the store, scanned again now, in channel number order.</summary>
+    internal IReadOnlyList<StoredChannel> Channels() => store.Refresh(Config.StorePath);
+
     private StoredChannel FindChannel(string channelId)
         => Lookup(channelId) ?? throw new ArgumentException($"No Linear TV channel with id {channelId}.", nameof(channelId));
 
     // The store is scanned at each guide refresh. After a restart that's still to come, though
     // Jellyfin's guide already lists the channels, so a miss scans the store before giving up.
-    private StoredChannel? Lookup(string channelId)
+    internal StoredChannel? Lookup(string channelId)
         => store.Find(channelId) ?? store.Refresh(Config.StorePath).FirstOrDefault(c => c.Id == channelId);
 
     /// <summary>The channel from the live position now. Called once per reader of the stream URL, so each joins at its own moment.</summary>
-    private Stream OpenStream(StoredChannel channel)
+    internal Stream OpenStream(StoredChannel channel)
     {
         var target = ChannelClock.Tune(channel.Manifest, time.GetUtcNow().UtcDateTime, TimeSpan.FromMinutes(Math.Max(0, Config.JoinThresholdMinutes)));
         var (keyframe, offset) = channel.Index.AtOrBefore(target.PositionTicks);

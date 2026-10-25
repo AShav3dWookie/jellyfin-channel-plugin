@@ -150,6 +150,29 @@ Channel 106 is one 60 s film, so it loops every minute: `tools/tune.sh 106 direc
 across the loop. **Pass:** timestamps keep rising through it, 0 decode errors, and the only gap is
 the same small cut as a programme change.
 
+### F. IPTV apps (1.0.2)
+
+The endpoints in `docs/architecture.md`, "IPTV apps". With `KEY` the test server's API key
+(`artifacts/.testserver.env`):
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" localhost:8097/LinearTv/Iptv/channels.m3u   # 401
+curl -s "localhost:8097/LinearTv/Iptv/channels.m3u?ApiKey=$KEY"
+curl -s "localhost:8097/LinearTv/Iptv/guide.xml?ApiKey=$KEY" | head
+curl -s -m 6 -o iptv.ts "localhost:8097/LinearTv/Iptv/ltv107.ts?ApiKey=$KEY"
+```
+
+**Pass:** 401 without the key. The playlist lists every channel in number order, with
+`url-tvg` and every stream URL carrying the key and the address you used. The guide's channel
+ids match the playlist's `tvg-id`. The stream starts within a second and is well over 6 s of
+video (the burst), and the plugin logs `playing <programme> from <time>`.
+
+Passed 2026-10-25: 4 channels, guide of 9,343 programmes (the test channels' 30-second clips),
+first byte in 0.03 s, 41 s of video in 6 s. On the LG (webOS 9.2.2) in
+[webOS IPTV Player](https://github.com/lennylxx/webos-iptv-player) 1.17.0, sideloaded through
+Developer Mode, pointed at `http://<pc>:8097/LinearTv/Iptv/channels.m3u?ApiKey=…`: the
+channels and guide loaded, and they played and changed channel.
+
 ### Not yet tried in 1.0
 
 - A browser and a TV watching through a programme change and the loop (only API captures so far)
