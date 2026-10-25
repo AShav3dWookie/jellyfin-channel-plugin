@@ -1,8 +1,7 @@
 using System.Text.Json;
-using Jellyfin.Plugin.LinearTv.Configuration;
-using Jellyfin.Plugin.LinearTv.Import;
+using LinearTv.Builder.Import;
 
-namespace Jellyfin.Plugin.LinearTv.Tests;
+namespace LinearTv.Builder.Tests;
 
 public class ChannelImporterTests
 {
@@ -208,7 +207,7 @@ public class ChannelImporterTests
             new() { Type = "film", Title = "inception" })), Library);
 
         Assert.True(report.Ok);
-        Assert.Equal([Inception, Interstellar], channels.Single().SourceIds);
+        Assert.Equal([Inception, Interstellar], channels.Single().Sources.Select(s => s.Id));
         Assert.Single(report.Channels.Single().Warnings);
     }
 
@@ -243,94 +242,23 @@ public class ChannelImporterTests
     public void Document_Empty_IsAnError()
         => Assert.False(ChannelImporter.Resolve(new ChannelDocument(), Library).Report.Ok);
 
-    // ---- merging ----
-
-    private static ChannelDefinition Existing(string number, string name, params Guid[] sources)
-        => new() { Number = number, Name = name, SourceIds = [.. sources] };
-
-    [Fact]
-    public void Merge_SameNumber_ReplacesButKeepsTheChannelsIdentity()
+    [Theory]
+    [InlineData(null, 1, true)]
+    [InlineData(3, 3, true)]
+    [InlineData(0, 0, false)]
+    [InlineData(21, 21, false)]
+    public void Passes_DefaultToOne_AndMustBeInRange(int? passes, int expected, bool ok)
     {
-        var existing = new List<ChannelDefinition> { Existing("101", "Old", Inception), Existing("102", "Keep", Amelie) };
-        var (report, imported) = ChannelImporter.Resolve(Doc(Channel("101", "New", new ContentRef { Type = "movie", Title = "Interstellar" })), Library);
+        var spec = Channel("201", "Nolan", new ContentRef { Type = "movie", Title = "Inception" });
+        spec.Passes = passes;
 
-        var merged = ChannelImporter.Merge(existing, imported, ImportMode.Merge, report);
+        var (report, channels) = ChannelImporter.Resolve(Doc(spec), Library);
 
-        Assert.Equal(["101", "102"], merged.Select(c => c.Number));
-        Assert.Equal(existing[0].Id, merged[0].Id);
-        Assert.Equal("New", merged[0].Name);
-        Assert.Equal([Interstellar], merged[0].SourceIds);
-        Assert.Equal("replace", report.Channels.Single().Action);
+        Assert.Equal(ok, report.Ok);
+        Assert.Equal(expected, channels.Single().Passes);
     }
 
-    [Fact]
-    public void Merge_NewNumber_IsAppendedAsACreate()
-    {
-        var existing = new List<ChannelDefinition> { Existing("101", "Old", Inception) };
-        var (report, imported) = ChannelImporter.Resolve(Doc(Channel("300", "New", new ContentRef { Type = "movie", Title = "Amelie" })), Library);
-
-        var merged = ChannelImporter.Merge(existing, imported, ImportMode.Merge, report);
-
-        Assert.Equal(["101", "300"], merged.Select(c => c.Number));
-        Assert.Equal("create", report.Channels.Single().Action);
-    }
-
-    [Fact]
-    public void Merge_NeverModifiesTheExistingChannels_SoDryRunsAreHarmless()
-    {
-        var existing = new List<ChannelDefinition> { Existing("101", "Old", Inception) };
-        var (report, imported) = ChannelImporter.Resolve(Doc(Channel("101", "New", new ContentRef { Type = "movie", Title = "Amelie" })), Library);
-
-        ChannelImporter.Merge(existing, imported, ImportMode.Merge, report);
-
-        Assert.Equal("Old", existing[0].Name);
-        Assert.Equal([Inception], existing[0].SourceIds);
-    }
-
-    [Fact]
-    public void Replace_KeepsOnlyTheImportedChannels_AndReportsTheRemoved()
-    {
-        var existing = new List<ChannelDefinition> { Existing("101", "Gone", Inception), Existing("102", "Kept", Amelie) };
-        var (report, imported) = ChannelImporter.Resolve(Doc(Channel("102", "Kept", new ContentRef { Type = "movie", Title = "Amelie" })), Library);
-
-        var merged = ChannelImporter.Merge(existing, imported, ImportMode.Replace, report);
-
-        Assert.Equal(["102"], merged.Select(c => c.Number));
-        Assert.Equal(existing[1].Id, merged[0].Id);
-        Assert.Equal(["101 Gone"], report.Removed);
-        Assert.Equal("unchanged", report.Channels.Single().Action);
-    }
-
-    // ---- export and the format ----
-
-    [Fact]
-    public void ExportThenImport_ChangesNothing()
-    {
-        var existing = new List<ChannelDefinition>
-        {
-            Existing("101", "Films", Inception, Thing1982, Amelie, NolanCollection),
-            new() { Number = "102", Name = "Telly", Shuffle = true, SourceIds = [Sopranos, LawAndOrder, SopranosS01E02, MoviesLibrary] },
-        };
-
-        var json = JsonSerializer.Serialize(ChannelExporter.Export(existing, Library), ChannelDocument.JsonOptions);
-        var document = JsonSerializer.Deserialize<ChannelDocument>(json, ChannelDocument.JsonOptions)!;
-        var (report, imported) = ChannelImporter.Resolve(document, Library);
-        var merged = ChannelImporter.Merge(existing, imported, ImportMode.Merge, report);
-
-        Assert.True(report.Ok);
-        Assert.All(report.Channels, c => Assert.Equal("unchanged", c.Action));
-        Assert.Equal(existing.SelectMany(c => c.SourceIds), merged.SelectMany(c => c.SourceIds));
-    }
-
-    [Fact]
-    public void Export_NamesEachItem_SoAnotherServerCanFindIt()
-    {
-        var document = ChannelExporter.Export([Existing("101", "Mixed", Thing2011, SopranosS01E01)], Library);
-        var content = document.Channels.Single().Content;
-
-        Assert.Equal(("movie", "The Thing", 2011), (content[0].Type, content[0].Title, content[0].Year));
-        Assert.Equal(("episode", "The Sopranos", 1, 1), (content[1].Type, content[1].Series, content[1].Season, content[1].Episode));
-    }
+    // ---- the format ----
 
     [Fact]
     public void Format_IsLenient_AboutCasingCommentsAndTrailingCommas()

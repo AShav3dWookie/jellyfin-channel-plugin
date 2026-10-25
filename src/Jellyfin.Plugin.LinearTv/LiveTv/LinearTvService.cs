@@ -1,11 +1,7 @@
-using System.Text.Json;
 using Jellyfin.Plugin.LinearTv.Configuration;
-using Jellyfin.Plugin.LinearTv.Library;
 using Jellyfin.Plugin.LinearTv.Scheduling;
+using Jellyfin.Plugin.LinearTv.Store;
 using MediaBrowser.Controller;
-using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.Movies;
-using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Model.Dto;
@@ -17,70 +13,21 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.LinearTv.LiveTv;
 
 /// <summary>
-/// Publishes the configured channels, their guide, and their streams to Jellyfin's Live TV.
+/// Publishes the channels in the store to Jellyfin's Live TV: the channel list, the guide from
+/// each channel's manifest, and the stream, read straight from the channel's files.
 /// </summary>
 /// <remarks>
 /// Implements <see cref="ISupportsDirectStreamProvider"/> so that an open stream is our own
-/// <see cref="LinearLiveStream"/> rather than Jellyfin's ExclusiveLiveStream: it plays on from
-/// programme to programme, and it undoes Jellyfin's forced interlacing flag.
+/// <see cref="LinearLiveStream"/> rather than Jellyfin's ExclusiveLiveStream: it plays on for as
+/// long as someone watches, and it undoes Jellyfin's forced interlacing flag.
 /// </remarks>
 internal sealed class LinearTvService(
-    ContentResolver content,
-    ApiKeyProvider apiKeys,
-    IMediaSourceManager mediaSources,
+    ChannelStore store,
     IServerApplicationHost appHost,
-    IHttpClientFactory httpClientFactory,
     StreamRegistry streams,
     TimeProvider time,
     ILogger<LinearTvService> logger) : ILiveTvService, ISupportsDirectStreamProvider
 {
-    public string Name => "Linear TV";
-
-    public string HomePageUrl => "https://github.com/jellyfin/jellyfin";
-
-    private static PluginConfiguration Config
-        => Plugin.Instance?.Configuration ?? throw new InvalidOperationException("Linear TV plugin is not loaded.");
-
-    public Task<IEnumerable<ChannelInfo>> GetChannelsAsync(CancellationToken cancellationToken)
-        => Task.FromResult(Config.Channels.Select(c => new ChannelInfo
-        {
-            Id = c.Id,
-            Name = c.Name,
-            Number = c.Number,
-            ChannelType = ChannelType.TV,
-            HasImage = false,
-        }));
-
-    public Task<IEnumerable<ProgramInfo>> GetProgramsAsync(
-        string channelId, DateTime startDateUtc, DateTime endDateUtc, CancellationToken cancellationToken)
-    {
-        var channel = FindChannel(channelId);
-        if (channel is null)
-        {
-            return Task.FromResult(Enumerable.Empty<ProgramInfo>());
-        }
-
-        var entries = content.Resolve(channel);
-        var programmes = GuideSlots(channel.Id, entries, channel.Shuffle, startDateUtc, endDateUtc)
-            .Select(slot => ToProgramInfo(channel, slot))
-            .ToList();
-
-        if (programmes.Count == MaxGuideProgrammes)
-        {
-            logger.LogInformation(
-                "Guide for {Channel} stops at {Count} programmes, before {End:u}: its programmes are short",
-                channel.Name, programmes.Count, endDateUtc);
-        }
-        else
-        {
-            logger.LogDebug(
-                "Guide for {Channel}: {Count} programmes from {Items} items",
-                channel.Name, programmes.Count, entries.Count);
-        }
-
-        return Task.FromResult<IEnumerable<ProgramInfo>>(programmes);
-    }
-
     /// <summary>Most programmes one channel publishes per guide refresh.</summary>
     /// <remarks>
     /// Four weeks of two-hour films, so channels of normal programmes never reach it; it bounds
@@ -88,45 +35,68 @@ internal sealed class LinearTvService(
     /// </remarks>
     internal const int MaxGuideProgrammes = 3000;
 
+    public string Name => "Linear TV";
+
+    public string HomePageUrl => "https://github.com/jellyfin/jellyfin";
+
+    private static PluginConfiguration Config
+        => Plugin.Instance?.Configuration ?? throw new InvalidOperationException("Linear TV plugin is not loaded.");
+
+    // Jellyfin asks for the channel list at every guide refresh: the store is rescanned then, so
+    // newly published channels appear with the guide.
+    public Task<IEnumerable<ChannelInfo>> GetChannelsAsync(CancellationToken cancellationToken)
+        => Task.FromResult(store.Refresh(Config.StorePath).Select(c => new ChannelInfo
+        {
+            Id = c.Id,
+            Name = c.Manifest.Name,
+            Number = c.Manifest.Number,
+            ChannelType = ChannelType.TV,
+            HasImage = false,
+        }));
+
+    public Task<IEnumerable<ProgramInfo>> GetProgramsAsync(
+        string channelId, DateTime startDateUtc, DateTime endDateUtc, CancellationToken cancellationToken)
+    {
+        if (store.Find(channelId) is not { } channel)
+        {
+            return Task.FromResult(Enumerable.Empty<ProgramInfo>());
+        }
+
+        var programmes = GuideSlots(channel.Manifest, startDateUtc, endDateUtc).Select(slot => ToProgramInfo(channel, slot)).ToList();
+        if (programmes.Count == MaxGuideProgrammes)
+        {
+            logger.LogInformation(
+                "Guide for {Channel} stops at {Count} programmes, before {End:u}: its programmes are short",
+                channel.Manifest.Name, programmes.Count, endDateUtc);
+        }
+
+        return Task.FromResult<IEnumerable<ProgramInfo>>(programmes);
+    }
+
     /// <summary>
     /// The guide for one channel: the range Jellyfin asks for, which its own "guide days" setting
-    /// controls (7 days by default, 14 at most), up to <see cref="MaxGuideProgrammes"/>. The guide
-    /// is display only; tuning always computes the live schedule directly.
+    /// controls (7 days by default, 14 at most), up to <see cref="MaxGuideProgrammes"/>.
     /// </summary>
-    internal static IEnumerable<ScheduledProgram> GuideSlots(
-        string channelId, IReadOnlyList<ScheduleEntry> entries, bool shuffle, DateTime startUtc, DateTime endUtc)
-        => ChannelSchedule.Between(channelId, entries, shuffle, startUtc, endUtc).Take(MaxGuideProgrammes);
+    internal static IEnumerable<GuideSlot> GuideSlots(ChannelManifest channel, DateTime startUtc, DateTime endUtc)
+        => ChannelClock.Between(channel, startUtc, endUtc).Take(MaxGuideProgrammes);
 
     // Called when a client actually tunes in. Jellyfin prefers this over GetChannelStream
     // because the service implements ISupportsDirectStreamProvider.
-    public async Task<ILiveStream> GetChannelStreamWithDirectStreamProvider(
+    public Task<ILiveStream> GetChannelStreamWithDirectStreamProvider(
         string channelId, string streamId, List<ILiveStream> currentLiveStreams, CancellationToken cancellationToken)
     {
-        var source = await CreateMediaSourceAsync(channelId).ConfigureAwait(false);
-        var planner = new Planner(this, FindChannel(channelId)!, content, apiKeys);
-
-        var liveStream = new LinearLiveStream(source, OpenStream, LocalBaseUrl, streams.Remove);
+        var channel = FindChannel(channelId);
+        var liveStream = new LinearLiveStream(CreateMediaSource(channel), () => OpenStream(channel), LocalBaseUrl, streams.Remove);
         streams.Add(liveStream);
-        return liveStream;
-
-        Stream OpenStream()
-        {
-            var http = httpClientFactory.CreateClient();
-            // A programme can run for hours; the stream is ended by cancellation, not a timeout.
-            http.Timeout = Timeout.InfiniteTimeSpan;
-            return new ChannelStream(planner, http, logger);
-        }
+        return Task.FromResult<ILiveStream>(liveStream);
     }
 
-    // Required by ILiveTvService, but not used for tuning while the method above exists. Plays a
-    // single programme only.
-    public async Task<MediaSourceInfo> GetChannelStream(string channelId, string streamId, CancellationToken cancellationToken)
-        => await CreateMediaSourceAsync(channelId).ConfigureAwait(false);
+    // Required by ILiveTvService; while the method above exists, Jellyfin tunes through that.
+    public Task<MediaSourceInfo> GetChannelStream(string channelId, string streamId, CancellationToken cancellationToken)
+        => Task.FromResult(CreateMediaSource(FindChannel(channelId)));
 
-    // Called when a client asks what it could play. Opening then calls GetChannelStream, which
-    // recomputes the offset, so this one's URL is never streamed.
-    public async Task<List<MediaSourceInfo>> GetChannelStreamMediaSources(string channelId, CancellationToken cancellationToken)
-        => [await CreateMediaSourceAsync(channelId).ConfigureAwait(false)];
+    public Task<List<MediaSourceInfo>> GetChannelStreamMediaSources(string channelId, CancellationToken cancellationToken)
+        => Task.FromResult<List<MediaSourceInfo>>([CreateMediaSource(FindChannel(channelId))]);
 
     public Task CloseLiveStream(string id, CancellationToken cancellationToken) => Task.CompletedTask;
 
@@ -154,205 +124,118 @@ internal sealed class LinearTvService(
 
     public Task CancelSeriesTimerAsync(string timerId, CancellationToken cancellationToken) => Task.CompletedTask;
 
-    private static NotSupportedException RecordingNotSupported() => new("Linear TV channels cannot be recorded.");
+    /// <summary>
+    /// The streams every channel carries, from its manifest: one video (H.265 since 1.0) and one AAC audio,
+    /// numbered as the TS lists them. Declared so Jellyfin can decide on direct play without probing.
+    /// </summary>
+    internal static List<MediaStream> Streams(ChannelManifest channel) =>
+    [
+        new MediaStream
+        {
+            Type = MediaStreamType.Video,
+            Index = 0,
+            Codec = channel.Video.Codec,
+            Profile = channel.Video.Profile,
+            Level = channel.Video.Level,
+            Width = channel.Video.Width,
+            Height = channel.Video.Height,
+            AverageFrameRate = (float)channel.Video.FrameRate,
+            RealFrameRate = (float)channel.Video.FrameRate,
+            BitRate = channel.Video.MaxBitRate,
+            BitDepth = 8,
+            PixelFormat = "yuv420p",
+            IsInterlaced = false,
+            IsAVC = channel.Video.Codec == "h264",
+            AspectRatio = "16:9",
+            IsDefault = true,
+        },
+        new MediaStream
+        {
+            Type = MediaStreamType.Audio,
+            Index = 1,
+            Codec = channel.Audio.Codec,
+            Profile = "LC",
+            Channels = channel.Audio.Channels,
+            ChannelLayout = channel.Audio.Channels == 2 ? "stereo" : null,
+            SampleRate = channel.Audio.SampleRate,
+            BitRate = channel.Audio.BitRate,
+            IsDefault = true,
+        },
+    ];
 
-    private static ChannelDefinition? FindChannel(string channelId)
-        => Config.Channels.FirstOrDefault(c => c.Id == channelId);
+    private static NotSupportedException RecordingNotSupported() => new("Linear TV channels cannot be recorded.");
 
     // Jellyfin fetches stream URLs itself, from inside its own host, so they must use the local
     // address rather than whatever the server is published as.
     private string LocalBaseUrl => appHost.GetApiUrlForLocalAccess(null, false);
 
-    private TuneTarget? ResolveNow(ChannelDefinition channel)
-        => ChannelSchedule.Resolve(
-            channel.Id,
-            content.Resolve(channel),
-            channel.Shuffle,
-            time.GetUtcNow().UtcDateTime,
-            TimeSpan.FromMinutes(Math.Max(0, Config.JoinThresholdMinutes)));
+    private StoredChannel FindChannel(string channelId)
+        => store.Find(channelId) ?? throw new ArgumentException($"No Linear TV channel with id {channelId}.", nameof(channelId));
 
-    private async Task<MediaSourceInfo> CreateMediaSourceAsync(string channelId)
+    /// <summary>The channel from the live position now. Called once per reader of the stream URL, so each joins at its own moment.</summary>
+    private Stream OpenStream(StoredChannel channel)
     {
-        var channel = FindChannel(channelId)
-            ?? throw new ArgumentException($"No Linear TV channel with id {channelId}.", nameof(channelId));
-
-        var target = ResolveNow(channel)
-            ?? throw new InvalidOperationException($"Channel {channel.Name} has nothing to play.");
-
-        var item = content.GetItem(target.Program.ItemId)
-            ?? throw new InvalidOperationException($"Scheduled item {target.Program.ItemId} is no longer in the library.");
-
-        // A single-programme URL. On the tuning path LinearLiveStream replaces it with the
-        // continuous stream; it is only ever played through the unused GetChannelStream.
-        var url = StreamUrlBuilder.Build(LocalBaseUrl, item.Id, target.OffsetTicks, await apiKeys.GetAsync().ConfigureAwait(false));
-
-        // Declared from the programme on air now. A channel whose content mixes codecs or
-        // resolutions will be described by whichever programme it was tuned on.
-        var (streams, audioIndex) = RemuxedStreams(item);
-
-        return new MediaSourceInfo
-        {
-            Id = channel.Id,
-            Name = channel.Name,
-            Path = url,
-            Protocol = MediaProtocol.Http,
-            Container = "ts",
-            IsRemote = false,
-            IsInfiniteStream = true,
-            RequiresOpening = true,
-            RequiresClosing = true,
-            SupportsDirectPlay = true,
-            SupportsDirectStream = true,
-            SupportsTranscoding = true,
-            // We declare the real streams below; probing would cost ~3s per tune for nothing.
-            SupportsProbing = false,
-            // No -re: the channel stream paces itself (TsPacer), after an initial burst. Jellyfin's
-            // -re paced from the first frame, so a browser waited three whole segments
-            // (~31 s measured) before it could start.
-            ReadAtNativeFramerate = false,
-            // Without this Jellyfin analyses 200 s of input (-analyzeduration 200M) before
-            // producing anything. On a paced stream that is 200 s of waiting (166 s measured).
-            // Must stay well inside ChannelStream.InitialBurst so the analysis never waits.
-            AnalyzeDurationMs = 5000,
-            MediaStreams = streams,
-            DefaultAudioStreamIndex = audioIndex,
-        };
+        var target = ChannelClock.Tune(channel.Manifest, time.GetUtcNow().UtcDateTime, TimeSpan.FromMinutes(Math.Max(0, Config.JoinThresholdMinutes)));
+        var (keyframe, offset) = channel.Index.AtOrBefore(target.PositionTicks);
+        var programme = channel.Manifest.Programmes[target.ProgrammeIndex];
+        logger.LogInformation(
+            "{Channel}: playing {Programme} from {Offset:hh\\:mm\\:ss}",
+            channel.Manifest.Name, Describe(programme), TimeSpan.FromTicks(Math.Max(0, keyframe - programme.Start)));
+        return new StoreStream(channel.Files, offset, Convert.FromBase64String(channel.Manifest.Psi), channel.Manifest.Name, logger, time);
     }
 
-    /// <summary>
-    /// The streams the remux actually carries: the first video and the default (else first)
-    /// audio, renumbered from 0. Declared so Jellyfin can make a real direct-play-versus-
-    /// transcode decision; left empty, Jellyfin substitutes dummies (docs/plan.md 4.6).
-    /// </summary>
-    private (List<MediaStream> Streams, int? AudioIndex) RemuxedStreams(BaseItem item)
+    private MediaSourceInfo CreateMediaSource(StoredChannel channel) => new()
     {
-        var (video, audio) = PlayedStreams(item);
+        Id = channel.Id,
+        Name = channel.Manifest.Name,
+        // Replaced by LinearLiveStream with the plugin's own stream endpoint.
+        Path = $"{LocalBaseUrl.TrimEnd('/')}/LinearTv/Stream/pending.ts",
+        Protocol = MediaProtocol.Http,
+        Container = "ts",
+        IsRemote = false,
+        IsInfiniteStream = true,
+        RequiresOpening = true,
+        RequiresClosing = true,
+        SupportsDirectPlay = true,
+        SupportsDirectStream = true,
+        SupportsTranscoding = true,
+        // The streams are declared below; probing would cost seconds per tune for nothing.
+        SupportsProbing = false,
+        // No -re: the stream paces itself (TsPacer) after an initial burst.
+        ReadAtNativeFramerate = false,
+        // Otherwise Jellyfin analyses 200 s of input before producing anything: on a paced
+        // stream, 200 s of waiting. Must stay well inside StoreStream.InitialBurst.
+        AnalyzeDurationMs = 5000,
+        MediaStreams = Streams(channel.Manifest),
+        DefaultAudioStreamIndex = 1,
+    };
 
-        var streams = new List<MediaStream>();
-        int? audioIndex = null;
-        foreach (var original in new[] { video, audio })
-        {
-            if (original is null)
-            {
-                continue;
-            }
-
-            // Copy: Jellyfin's Normalize() mutates the streams we return, and these objects
-            // belong to the library item.
-            var copy = JsonSerializer.Deserialize<MediaStream>(JsonSerializer.Serialize(original))!;
-            copy.Index = streams.Count;
-            if (copy.Type == MediaStreamType.Audio)
-            {
-                audioIndex = copy.Index;
-            }
-
-            streams.Add(copy);
-        }
-
-        return (streams, audioIndex);
-    }
-
-    /// <summary>
-    /// The streams a remux of this item carries: the first video, and the default (else first)
-    /// audio. The declared streams and the format comparison both use this, so they agree.
-    /// </summary>
-    private (MediaStream? Video, MediaStream? Audio) PlayedStreams(BaseItem item)
+    private static ProgramInfo ToProgramInfo(StoredChannel channel, GuideSlot slot)
     {
-        var all = mediaSources.GetStaticMediaSources(item, false, null).FirstOrDefault()?.MediaStreams ?? [];
-        var video = all.FirstOrDefault(s => s.Type == MediaStreamType.Video);
-        var audio = all.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.IsDefault)
-            ?? all.FirstOrDefault(s => s.Type == MediaStreamType.Audio);
-        return (video, audio);
-    }
-
-    /// <summary>Video and audio codec, e.g. "h264/aac"; null when there's no video information.</summary>
-    private string? FormatOf(BaseItem item)
-    {
-        var (video, audio) = PlayedStreams(item);
-        return video?.Codec is { Length: > 0 } videoCodec
-            ? $"{videoCodec}/{audio?.Codec ?? "none"}".ToLowerInvariant()
-            : null;
-    }
-
-    private ProgramInfo ToProgramInfo(ChannelDefinition channel, ScheduledProgram slot)
-    {
-        var programme = new ProgramInfo
+        var p = slot.Programme;
+        var image = channel.ImagePath(p);
+        return new ProgramInfo
         {
             // Stable for a given slot, so each guide refresh updates rather than duplicates.
             Id = $"{channel.Id}-{slot.StartUtc.Ticks}",
             ChannelId = channel.Id,
             StartDate = slot.StartUtc,
             EndDate = slot.EndUtc,
+            Name = p.Title,
+            EpisodeTitle = p.EpisodeTitle,
+            SeasonNumber = p.Season,
+            EpisodeNumber = p.Episode,
+            IsSeries = p.EpisodeTitle is not null || p.Season is not null,
+            IsMovie = p.Movie,
+            ProductionYear = p.Year,
+            Overview = p.Overview,
+            Genres = p.Genres ?? [],
+            OfficialRating = p.Rating,
+            ImagePath = image,
+            HasImage = image is not null,
         };
-
-        var item = content.GetItem(slot.ItemId);
-        if (item is null)
-        {
-            programme.Name = "Unavailable";
-            return programme;
-        }
-
-        programme.Overview = item.Overview;
-        programme.OfficialRating = item.OfficialRating;
-        programme.Genres = [.. item.Genres];
-        programme.ProductionYear = item.ProductionYear;
-        programme.ImagePath = PrimaryImagePath(item);
-        programme.HasImage = programme.ImagePath is not null;
-
-        if (item is Episode episode)
-        {
-            programme.Name = episode.SeriesName ?? item.Name;
-            programme.EpisodeTitle = item.Name;
-            programme.IsSeries = true;
-            programme.SeriesId = episode.SeriesId.ToString("N");
-            programme.SeasonNumber = episode.ParentIndexNumber;
-            programme.EpisodeNumber = episode.IndexNumber;
-        }
-        else
-        {
-            programme.Name = item.Name;
-            programme.IsMovie = item is Movie;
-        }
-
-        return programme;
     }
 
-    private static string? PrimaryImagePath(BaseItem item)
-    {
-        if (item.HasImage(ImageType.Primary, 0))
-        {
-            return item.GetImagePath(ImageType.Primary, 0);
-        }
-
-        // Episodes often have no image of their own; fall back to the series poster.
-        return item is Episode { Series: { } series } && series.HasImage(ImageType.Primary, 0)
-            ? series.GetImagePath(ImageType.Primary, 0)
-            : null;
-    }
-
-    private static string Describe(BaseItem item)
-        => item is Episode e ? $"{e.SeriesName} S{e.ParentIndexNumber:00}E{e.IndexNumber:00}" : item.Name;
-
-    /// <summary>The schedule, as a <see cref="ChannelStream"/> sees it.</summary>
-    private sealed class Planner(
-        LinearTvService service, ChannelDefinition channel, ContentResolver content, ApiKeyProvider apiKeys) : IChannelPlanner
-    {
-        public string ChannelName => channel.Name;
-
-        public TuneTarget? First() => service.ResolveNow(channel);
-
-        // Re-resolves content at each boundary, so library changes are picked up as the channel
-        // plays rather than only on the next tune.
-        public ScheduledProgram? After(ScheduledProgram previous)
-            => ChannelSchedule.At(channel.Id, content.Resolve(channel), channel.Shuffle, previous.EndUtc);
-
-        public async Task<string> UrlForAsync(Guid itemId, long offsetTicks)
-            => StreamUrlBuilder.Build(service.LocalBaseUrl, itemId, offsetTicks, await apiKeys.GetAsync().ConfigureAwait(false));
-
-        public string Describe(Guid itemId)
-            => content.GetItem(itemId) is { } item ? LinearTvService.Describe(item) : itemId.ToString("N");
-
-        public string? FormatOf(Guid itemId)
-            => content.GetItem(itemId) is { } item ? service.FormatOf(item) : null;
-    }
+    private static string Describe(ManifestProgramme p)
+        => p.Season is { } s ? $"{p.Title} S{s:00}E{p.Episode:00}" : p.Year is { } y ? $"{p.Title} ({y})" : p.Title;
 }

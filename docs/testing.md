@@ -2,11 +2,13 @@
 
 How to test the Linear TV plugin and its tooling, from a clean machine to the NAS.
 
-**Start with [Channels — the main test](#channels--the-main-test).** That is the feature.
-Sections 2–9 test the tooling and the building blocks underneath it.
+**Start with [1.0: built channels](#10-built-channels).** That is the feature since 1.0
+(`docs/architecture.md`). The sections after it were written for 0.x, which joined Jellyfin's
+remuxes at play time: the channel tests A–K and the spikes describe that design and are kept as
+history. Sections 2–9 (tooling, release, NAS) still apply.
 
-Every command here was run on the development machine (Windows 11, Docker Desktop 27.4, Git
-Bash) on 2026-09-30, unless it is marked **not yet run**.
+Every command in the 1.0 section was run on the development machine (Windows 11, RTX A5000,
+Docker Desktop, Git Bash) on 2026-10-24; the rest on 2026-09-30, unless marked **not yet run**.
 
 ---
 
@@ -20,9 +22,11 @@ Bash) on 2026-09-30, unless it is marked **not yet run**.
 | Account type | Administrator. It is shown on the login screen as a user tile. |
 | API key | In `artifacts/.testserver.env`, written by `./x init` |
 | **Live TV (channels and guide)** | **http://localhost:8097/web/#/livetv** |
-| Plugin settings (create channels here) | http://localhost:8097/web/#/configurationpage?name=Linear%20TV |
+| Plugin settings (store folder; lists channels) | http://localhost:8097/web/#/configurationpage?name=Linear%20TV |
 | Plugin list | http://localhost:8097/web/#/dashboard/plugins |
-| Channel import/export | `./x channels` (help with no arguments), or the endpoints `POST /LinearTv/Channels/Import` and `GET /LinearTv/Channels/Export`; see [channel-format.md](./channel-format.md) and tests I–K |
+| Building channels | `./x builder check\|build <file>`, `./x publish`, `./x store`; see [channel-format.md](./channel-format.md) |
+| Test channel files | `tests/channels/test.json` (104–106), `tests/channels/clock.json` (107) |
+| Store on the test server | `testdata/store` on the PC, `/store` in the container |
 | Server logs | `./x logs` (Ctrl+C to stop following) |
 | Help | `./x` with no arguments |
 
@@ -57,6 +61,102 @@ the same media.
 | Mixed Show S01E07 (H.264 720p · AAC · MKV) | 30 s | `65818c61f38d9165488e95de6f534b61` |
 
 `./x init` prints this list too. If your IDs ever differ, trust its output.
+
+
+---
+
+## 1.0: built channels
+
+### Setup
+
+```bash
+./x media      # test clips, plus 8 films for the audio, subtitle and picture rules
+./x deploy     # build the plugin, start the test server
+./x init       # libraries (Shows, Films), API key, plugin store folder /store
+```
+
+`./x init` waits for the films too, and points the plugin at `/store`. If the plugin wasn't
+loaded yet it says so: run `./x init` again after `./x deploy`.
+
+### A. The rules, before building anything
+
+```bash
+./x builder check tests/channels/test.json
+```
+
+**Pass**, under 105 Language Rules:
+
+```
+  *  Lang Test (2001): Japanese audio, full English subtitles (subrip)
+  *  Forced Test (2002): English audio, forced English subtitles (subrip)
+  *  Scope Test (2004): French audio, full English subtitles (subrip)
+  *  External Subs (2007): German audio, full English subtitles (subrip, external)
+  *  Schindler's Test (2008): Polish audio, full English subtitles (subrip)
+  -  left out: Dub Only (2006): no Japanese (original) audio, only English; set "audio" to allow a dub
+```
+
+and 106 Dub Allowed has Dub Only in it (its entry sets `"audio": "eng"`). The test library has
+no TMDb data, so original languages come from each film's `.nfo` country.
+
+### B. Build
+
+```bash
+./x builder build tests/channels/test.json
+```
+
+**Pass:** three `built …` lines. Re-running after a failure encodes only what failed. Then, for
+any build in `artifacts/built/`, with the pinned ffprobe:
+
+- no decode errors: `ffmpeg -v error -i channel.ts -f null -` prints nothing
+- frame grabs 20 s into each programme of 105 show what its label says: subtitles as expected,
+  the anamorphic box square, the scope film letterboxed with subtitles in the bar
+
+Measured 2026-10-24: all three passed; 0 decode errors; joins 0.11 s video / 0.08 s audio; the
+Lang Test audio is the 1 kHz (Japanese) tone at −26 dB, the others −25 dB.
+
+### C. Publish and the guide
+
+```bash
+./x publish all
+./x store
+```
+
+**Pass:** the store lists 104–106 (and 107 if built), and Live TV shows them with guide entries.
+`./x unpublish 106` takes one off; `./x publish 106` puts it back.
+
+### D. Tune in as a client
+
+`tools/tune.sh` tunes a channel through Jellyfin's API the way a client does and captures what it
+gets, as a TS client (`direct`) or a browser (`hls`):
+
+```bash
+MSYS_NO_PATHCONV=1 docker compose run --rm sdk bash tools/tune.sh 105 direct 12 artifacts/check/direct105
+MSYS_NO_PATHCONV=1 docker compose run --rm sdk bash tools/tune.sh 105 hls 30 artifacts/check/hls105
+```
+
+**Pass:**
+- direct: `SupportsDirectPlay: true`, no transcode reasons; the capture starts on a keyframe with
+  0 decode errors, about 35 s more video than the capture took (the burst)
+- hls: transcode reason only `ContainerNotSupported`, and Jellyfin's log shows
+  `-codec:v:0 copy` and `-codec:a:0 copy`
+- the plugin logs `playing <programme> from <time>`; with the join threshold at 0 (settings
+  page) the time matches the guide, to the keyframe before
+
+All passed on 2026-10-24. Tuned 29 s into Lang Test: played from 00:00:28.
+
+### E. The loop
+
+Channel 106 is one 60 s film, so it loops every minute: `tools/tune.sh 106 direct 45 …` captures
+across the loop. **Pass:** timestamps keep rising through it, 0 decode errors, and the only gap is
+the same small cut as a programme change.
+
+### Not yet tried in 1.0
+
+- A browser and a TV watching through a programme change and the loop (only API captures so far)
+- Image subtitles (PGS/VobSub) from a real disc rip; the test media can't contain them
+- A real HDR film (the test film is SDR colours tagged as HDR10, so its tone-mapped colours mean nothing)
+- A channel over 100 hours (chunked files) end to end
+- The NAS: building from `\\TRUENAS` shares and publishing there
 
 ---
 
@@ -135,7 +235,7 @@ see Troubleshooting.
 
 ---
 
-## Channels — the main test
+## Channels in 0.x (history)
 
 **Purpose:** channels you can see in the guide, tune into part-way through a programme, and
 flick between.

@@ -7,12 +7,13 @@ using MediaBrowser.Model.Serialization;
 namespace Jellyfin.Plugin.LinearTv;
 
 /// <summary>
-/// Presents library content as pseudo live TV channels.
+/// Plays pre-built channels as live TV.
 /// </summary>
 /// <remarks>
-/// The plugin handles no media. It publishes channels and an EPG, and resolves a tuned channel
-/// to a URL pointing back at Jellyfin's own <c>/Videos/{id}/stream</c> endpoint with the live
-/// offset applied. See <c>docs/plan.md</c>.
+/// The plugin encodes nothing and reads no library. Each channel is one continuous MPEG-TS,
+/// built offline on another machine and copied into the store folder; the plugin publishes the
+/// channels and their guide, and plays each from wherever its loop is now. See
+/// <c>docs/architecture.md</c>.
 /// </remarks>
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
@@ -40,7 +41,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     /// <inheritdoc />
     public override string Description =>
-        "Turns library content into tunable pseudo live TV channels with a wall-clock schedule.";
+        "Plays pre-built channels as tunable live TV, with a wall-clock schedule and a guide.";
 
     /// <summary>
     /// Raised after settings are saved. <see cref="BasePlugin{TConfigurationType}"/> exposes no

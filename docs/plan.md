@@ -1,5 +1,9 @@
 # Implementation Plan — Linear TV channels for Jellyfin
 
+> **Superseded (2026-10-24).** This describes 0.1–0.4, which joined Jellyfin's per-programme
+> remuxes at play time. 1.0 plays channels pre-built on another machine: see `architecture.md`.
+> Kept for its findings about Jellyfin's Live TV internals, which still apply.
+
 Follows [feasibility.md](./feasibility.md). Supersedes the concat/remux plan.
 
 > **Status (2026-09-30): channels work end to end on the test server.** Channels are defined on

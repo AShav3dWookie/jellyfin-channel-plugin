@@ -1,9 +1,4 @@
-using Jellyfin.Data.Enums;
-using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.TV;
-using MediaBrowser.Controller.Library;
-
-namespace Jellyfin.Plugin.LinearTv.Import;
+namespace LinearTv.Builder.Import;
 
 /// <summary>Kinds of content a channel can reference by name.</summary>
 internal static class ContentKind
@@ -59,54 +54,4 @@ internal sealed class LibraryCatalogue
     public CatalogueItem? Find(Guid id) => _byId.GetValueOrDefault(id);
 
     public IEnumerable<CatalogueItem> OfKind(string kind) => Items.Where(i => i.Kind == kind);
-}
-
-/// <summary>Builds a <see cref="LibraryCatalogue"/> from the Jellyfin library.</summary>
-internal sealed class LibraryCatalogueSource(ILibraryManager libraryManager)
-{
-    public LibraryCatalogue Build()
-    {
-        var items = new List<CatalogueItem>();
-
-        foreach (var item in Query(BaseItemKind.Movie))
-        {
-            items.Add(new(item.Id, ContentKind.Movie, item.Name, item.OriginalTitle, item.ProductionYear));
-        }
-
-        foreach (var item in Query(BaseItemKind.Series))
-        {
-            items.Add(new(item.Id, ContentKind.Series, item.Name, item.OriginalTitle, item.ProductionYear));
-        }
-
-        foreach (var item in Query(BaseItemKind.BoxSet))
-        {
-            items.Add(new(item.Id, ContentKind.Collection, item.Name));
-        }
-
-        foreach (var episode in Query(BaseItemKind.Episode).OfType<Episode>())
-        {
-            items.Add(new(
-                episode.Id, ContentKind.Episode, episode.Name,
-                SeriesId: episode.SeriesId, SeriesName: episode.SeriesName,
-                Season: episode.ParentIndexNumber, Episode: episode.IndexNumber));
-        }
-
-        foreach (var folder in libraryManager.GetVirtualFolders())
-        {
-            if (Guid.TryParse(folder.ItemId, out var id))
-            {
-                items.Add(new(id, ContentKind.Library, folder.Name));
-            }
-        }
-
-        return new LibraryCatalogue(items);
-    }
-
-    private IReadOnlyList<BaseItem> Query(BaseItemKind kind)
-        => libraryManager.GetItemList(new InternalItemsQuery
-        {
-            IncludeItemTypes = [kind],
-            Recursive = true,
-            IsVirtualItem = false,
-        });
 }

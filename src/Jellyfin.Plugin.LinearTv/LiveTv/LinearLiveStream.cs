@@ -5,16 +5,15 @@ using MediaBrowser.Model.Entities;
 namespace Jellyfin.Plugin.LinearTv.LiveTv;
 
 /// <summary>
-/// An open channel stream. Does two things Jellyfin's own ExclusiveLiveStream cannot: keeps
-/// playing from programme to programme, and undoes Jellyfin marking every third-party Live TV
-/// stream interlaced.
+/// An open channel stream. Does two things Jellyfin's own ExclusiveLiveStream cannot: serves a
+/// stream the plugin makes itself, and undoes Jellyfin marking every third-party Live TV stream
+/// interlaced.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Continuity.</b> A plain remux URL ends when its programme ends, and clients then stop and
-/// return to the menu (observed in the web client). Instead, <see cref="MediaSourceInfo.Path"/>
-/// points at the plugin's <c>/LinearTv/Stream/{UniqueId}.ts</c>, which serves
-/// <see cref="GetStream"/>: a <see cref="ChannelStream"/> that runs on into each next programme.
+/// <b>The stream.</b> <see cref="MediaSourceInfo.Path"/> points at the plugin's
+/// <c>/LinearTv/Stream/{UniqueId}.ts</c>, which serves <see cref="GetStream"/>: a
+/// <see cref="StoreStream"/> playing the channel's files from the live position.
 /// </para>
 /// <para>
 /// <c>LiveTvMediaSourceProvider.Normalize()</c> runs

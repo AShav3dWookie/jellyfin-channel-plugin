@@ -1,4 +1,4 @@
-namespace Jellyfin.Plugin.LinearTv.Scheduling;
+namespace LinearTv.Builder;
 
 /// <summary>
 /// A shuffle that gives the same order for the same seed on every run, machine and .NET version.

@@ -1,5 +1,9 @@
 # Pseudo-Channels for Jellyfin — Feasibility Study
 
+> **Superseded (2026-10-24).** This describes 0.1–0.4, which joined Jellyfin's per-programme
+> remuxes at play time. 1.0 plays channels pre-built on another machine: see `architecture.md`.
+> Kept for its findings about Jellyfin's Live TV internals, which still apply.
+
 **Date:** 2026-09-28
 
 **Question:** Can a Jellyfin plugin present library content as tunable pseudo-channels with a

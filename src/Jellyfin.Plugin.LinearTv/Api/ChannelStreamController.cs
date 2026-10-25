@@ -14,10 +14,9 @@ namespace Jellyfin.Plugin.LinearTv.Api;
 /// <para>
 /// Why not use Jellyfin's endpoint: it wraps the stream in a ProgressiveFileStream, which on
 /// end-of-stream keeps retrying for 30 seconds before giving up. That suits a file that is still
-/// being written. Here it meant a channel that ends cleanly at a format change (see
-/// <see cref="ChannelStream"/>) only stopped 30 s later. Browsers buffer as little as 6 s ahead
-/// (jellyfin-web, Chrome/Edge/Firefox on fast connections), so viewers would watch a frozen last
-/// frame for ~24 s. Served directly, the end reaches the player straight away.
+/// being written. In 0.x it meant a channel that ended at a format change only stopped 30 s
+/// later, on a frozen frame. A <see cref="StoreStream"/> doesn't end, but if it fails (a file
+/// removed while playing), served directly, the end reaches the player straight away.
 /// </para>
 /// <para>
 /// Anonymous, like Jellyfin's own endpoint: Jellyfin's ffmpeg and its stream proxy fetch this

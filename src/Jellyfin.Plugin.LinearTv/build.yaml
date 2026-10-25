@@ -2,22 +2,25 @@
 name: "Linear TV"
 guid: "437f1b36-c02d-4c02-9083-19440d7f243b"
 imageUrl: ""
-version: "0.4.0.0"
+version: "1.0.0.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 owner: "aaronhanna91"
-overview: "Pseudo live TV channels built from your library."
+overview: "Pre-built live TV channels, played from files."
 description: >
-  Turns library content into tunable pseudo live TV channels with a wall-clock schedule.
-  Channels appear natively in the Live TV guide, cannot be sought, and play on from one
-  programme to the next. The plugin never decodes or encodes video: it joins Jellyfin's own
-  stream copies end to end, and any transcoding is done by Jellyfin.
+  Plays channels built offline as live TV. Each channel is one continuous MPEG-TS in a single
+  format, built from a lineup of films and episodes on another machine and copied into a store
+  folder. Channels appear natively in the Live TV guide, cannot be sought, and play seamlessly
+  from one programme to the next whatever the original files' formats. The server does no
+  encoding: it reads the channel's file at real-time pace.
 category: "LiveTV"
 artifacts:
   - "Jellyfin.Plugin.LinearTv.dll"
 changelog: >
-  The guide now runs as far ahead as Jellyfin asks: its own guide-days setting (Dashboard,
-  Live TV), 7 days by default and 14 at most. Before, it stopped after two days. The plugin's
-  Guide horizon setting is gone; saved settings that still contain it load fine. Channels of
-  very short programmes publish at most 3,000 programmes per guide refresh. Saving channels while
-  the guide is refreshing no longer loses the change: the refresh is queued and runs next.
+  1.0 is a new design. Channels are no longer configured on the settings page or joined from the
+  library at play time: they are built on a PC with linear-tv-builder into one continuous 720p
+  H.265 stream per channel (original-language audio, AAC stereo 192 kb/s; English subtitles
+  burned in for foreign audio, forced subtitles otherwise) and copied into the store folder set
+  on the settings page. Programme changes no longer stop the stream, every source format plays,
+  and the server encodes nothing. Channels from 0.x are not carried over: rebuild them from their
+  channel files. Clients that can't play H.265 are transcoded by Jellyfin.

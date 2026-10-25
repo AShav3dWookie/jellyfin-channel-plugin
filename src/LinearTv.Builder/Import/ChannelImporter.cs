@@ -1,37 +1,21 @@
 using System.Text;
-using Jellyfin.Plugin.LinearTv.Configuration;
+using LinearTv.Builder.Library;
 
-namespace Jellyfin.Plugin.LinearTv.Import;
+namespace LinearTv.Builder.Import;
 
-/// <summary>How imported channels combine with the existing ones.</summary>
-internal enum ImportMode
-{
-    /// <summary>Imported channels replace existing channels with the same number; others are kept.</summary>
-    Merge,
-
-    /// <summary>The imported channels become the whole channel list.</summary>
-    Replace,
-}
-
-/// <summary>What an import did, or would do. Returned for dry runs and real imports alike.</summary>
+/// <summary>How a channel file resolved against the library.</summary>
 internal sealed class ImportReport
 {
-    public bool DryRun { get; set; }
-
-    public bool Saved { get; set; }
-
-    public string Mode { get; set; } = "merge";
-
-    /// <summary>Gets a value indicating whether the import can be saved: nothing failed to resolve.</summary>
+    /// <summary>Gets a value indicating whether everything resolved, so the channels can be built.</summary>
     public bool Ok => Errors.Count == 0 && Channels.TrueForAll(c => c.Problems.Count == 0);
 
     /// <summary>Gets problems with the document as a whole.</summary>
     public List<string> Errors { get; } = [];
 
-    public List<ChannelReport> Channels { get; } = [];
+    /// <summary>Gets or sets the viewer's language, canonical.</summary>
+    public string Language { get; set; } = Languages.English;
 
-    /// <summary>Gets the channels a replace-mode import removes.</summary>
-    public List<string> Removed { get; } = [];
+    public List<ChannelReport> Channels { get; } = [];
 }
 
 /// <summary>One channel's part of an <see cref="ImportReport"/>.</summary>
@@ -43,17 +27,23 @@ internal sealed class ChannelReport
 
     public bool Shuffle { get; set; }
 
-    /// <summary>Gets or sets one of create, replace, unchanged.</summary>
-    public string? Action { get; set; }
+    public int Passes { get; set; } = 1;
 
     public List<ResolvedContent> Content { get; } = [];
 
-    /// <summary>Gets what stops the import being saved.</summary>
+    /// <summary>Gets what stops the channel being built.</summary>
     public List<string> Problems { get; } = [];
 
-    /// <summary>Gets things worth knowing that don't stop the import.</summary>
+    /// <summary>Gets things worth knowing that don't stop the build.</summary>
     public List<string> Warnings { get; } = [];
 }
+
+/// <summary>A channel whose content all resolved: its sources, in the order listed, each with its track options.</summary>
+internal sealed record ResolvedChannel(
+    string Number, string Name, bool Shuffle, int Passes, IReadOnlyList<ResolvedSource> Sources, string Language);
+
+/// <summary>One resolved content entry: the library item, and the audio and subtitle rules for what it expands to.</summary>
+internal sealed record ResolvedSource(Guid Id, TrackOptions Options);
 
 /// <summary>How one content reference resolved.</summary>
 internal sealed class ResolvedContent
@@ -70,8 +60,8 @@ internal sealed class ResolvedContent
 }
 
 /// <summary>
-/// Resolves a <see cref="ChannelDocument"/> against the library and merges it into the channel list.
-/// Pure: no I/O and no Jellyfin services, so it is tested directly.
+/// Resolves a <see cref="ChannelDocument"/> against the library. Pure: no I/O, so it is tested
+/// directly.
 /// </summary>
 /// <remarks>
 /// Matching is forgiving where sources commonly disagree, and strict where guessing would be
@@ -81,16 +71,34 @@ internal sealed class ResolvedContent
 /// </remarks>
 internal static class ChannelImporter
 {
-    public static (ImportReport Report, List<ChannelDefinition> Channels) Resolve(
+    /// <summary>Most passes a channel file may hold: each one is the whole lineup again.</summary>
+    public const int MaxPasses = 20;
+
+    public static (ImportReport Report, List<ResolvedChannel> Channels) Resolve(
         ChannelDocument document, LibraryCatalogue catalogue)
     {
         var report = new ImportReport();
-        var channels = new List<ChannelDefinition>();
+        var channels = new List<ResolvedChannel>();
 
         if (document.Channels.Count == 0)
         {
             report.Errors.Add("The document has no channels.");
         }
+
+        var viewer = Languages.English;
+        if (document.Language is { } language)
+        {
+            if (Languages.Normalize(language) is { } known)
+            {
+                viewer = known;
+            }
+            else
+            {
+                report.Errors.Add($"language '{language}' isn't a language code or name this builder knows.");
+            }
+        }
+
+        report.Language = viewer;
 
         foreach (var duplicate in document.Channels
             .Where(c => !string.IsNullOrWhiteSpace(c.Number))
@@ -102,7 +110,10 @@ internal static class ChannelImporter
 
         foreach (var spec in document.Channels)
         {
-            var channel = new ChannelReport { Number = spec.Number?.Trim(), Name = spec.Name?.Trim(), Shuffle = spec.Shuffle };
+            var channel = new ChannelReport
+            {
+                Number = spec.Number?.Trim(), Name = spec.Name?.Trim(), Shuffle = spec.Shuffle, Passes = spec.Passes ?? 1,
+            };
             if (string.IsNullOrWhiteSpace(channel.Number))
             {
                 channel.Problems.Add("Missing channel number.");
@@ -118,7 +129,14 @@ internal static class ChannelImporter
                 channel.Problems.Add("No content listed.");
             }
 
+            if (spec.Passes is < 1 or > MaxPasses)
+            {
+                channel.Problems.Add($"passes must be from 1 to {MaxPasses}, not {spec.Passes}.");
+            }
+
+            var channelOptions = ParseOptions(spec.Audio, spec.Subtitles, TrackOptions.Default, channel.Problems, "channel");
             var ids = new List<Guid>();
+            var sources = new List<ResolvedSource>();
             foreach (var reference in spec.Content)
             {
                 var resolved = new ResolvedContent { Requested = reference.ToString() };
@@ -141,6 +159,8 @@ internal static class ChannelImporter
                     else
                     {
                         ids.Add(item.Id);
+                        sources.Add(new ResolvedSource(
+                            item.Id, ParseOptions(reference.Audio, reference.Subtitles, channelOptions, channel.Problems, resolved.Requested)));
                     }
                 }
 
@@ -148,61 +168,41 @@ internal static class ChannelImporter
             }
 
             report.Channels.Add(channel);
-            channels.Add(new ChannelDefinition
-            {
-                Number = channel.Number ?? string.Empty,
-                Name = channel.Name ?? string.Empty,
-                Shuffle = spec.Shuffle,
-                SourceIds = ids,
-            });
+            channels.Add(new ResolvedChannel(channel.Number ?? string.Empty, channel.Name ?? string.Empty, spec.Shuffle, channel.Passes, sources, viewer));
         }
 
         return (report, channels);
     }
 
-    /// <summary>
-    /// The channel list after importing. Never modifies <paramref name="existing"/>, so a dry run
-    /// can call this safely. Records each channel's action in <paramref name="report"/>.
-    /// </summary>
-    public static List<ChannelDefinition> Merge(
-        IReadOnlyList<ChannelDefinition> existing,
-        IReadOnlyList<ChannelDefinition> imported,
-        ImportMode mode,
-        ImportReport report)
+    /// <summary>An entry's (or channel's) audio and subtitle options, each inheriting from <paramref name="inherited"/> when unset.</summary>
+    private static TrackOptions ParseOptions(string? audio, string? subtitles, TrackOptions inherited, List<string> problems, string what)
     {
-        report.Mode = mode == ImportMode.Merge ? "merge" : "replace";
-        var byNumber = existing.GroupBy(c => c.Number.Trim()).ToDictionary(g => g.Key, g => g.First());
-        var result = mode == ImportMode.Merge ? existing.Select(Copy).ToList() : [];
-
-        for (var i = 0; i < imported.Count; i++)
+        var options = inherited;
+        if (audio is not null)
         {
-            var incoming = Copy(imported[i]);
-            if (byNumber.TryGetValue(incoming.Number, out var current))
+            if (Languages.Normalize(audio) is { } language)
             {
-                // Same number: keep the channel's identity, so the guide treats it as the same channel.
-                incoming.Id = current.Id;
-                report.Channels[i].Action = SameContent(current, incoming) ? "unchanged" : "replace";
-                if (mode == ImportMode.Merge)
-                {
-                    result[result.FindIndex(c => c.Id == current.Id)] = incoming;
-                    continue;
-                }
+                options = options with { Audio = language };
             }
             else
             {
-                report.Channels[i].Action = "create";
+                problems.Add($"{what}: audio '{audio}' isn't a language code or name this builder knows.");
             }
-
-            result.Add(incoming);
         }
 
-        if (mode == ImportMode.Replace)
+        if (subtitles is not null)
         {
-            var kept = imported.Select(c => c.Number).ToHashSet();
-            report.Removed.AddRange(existing.Where(c => !kept.Contains(c.Number.Trim())).Select(c => $"{c.Number} {c.Name}"));
+            if (Enum.TryParse<SubtitleMode>(subtitles.Trim(), ignoreCase: true, out var mode) && Enum.IsDefined(mode))
+            {
+                options = options with { Subtitles = mode };
+            }
+            else
+            {
+                problems.Add($"{what}: subtitles must be auto, none, forced or full, not '{subtitles}'.");
+            }
         }
 
-        return result;
+        return options;
     }
 
     internal static (CatalogueItem? Item, string? Problem, string? Note) ResolveReference(
@@ -388,18 +388,6 @@ internal static class ChannelImporter
             .Select(k => Math.Min(k.Length, key.Length))
             .DefaultIfEmpty(0)
             .Max();
-
-    private static bool SameContent(ChannelDefinition a, ChannelDefinition b)
-        => a.Name == b.Name && a.Shuffle == b.Shuffle && a.SourceIds.SequenceEqual(b.SourceIds);
-
-    private static ChannelDefinition Copy(ChannelDefinition c) => new()
-    {
-        Id = c.Id,
-        Number = c.Number,
-        Name = c.Name,
-        Shuffle = c.Shuffle,
-        SourceIds = [.. c.SourceIds],
-    };
 
     private static string? Join(string? a, string? b) => (a, b) switch
     {

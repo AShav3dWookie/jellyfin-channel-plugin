@@ -46,13 +46,11 @@ public class PluginIdentityTests
     }
 
     [Fact]
-    public void Configuration_DefaultsToUtcAndAFiveMinuteJoinThreshold()
+    public void Configuration_DefaultsToNoStoreAndAFiveMinuteJoinThreshold()
     {
         var config = new PluginConfiguration();
 
-        // Empty means UTC: the container's ambient zone must never leak into scheduling.
-        Assert.Equal(string.Empty, config.ScheduleTimeZone);
+        Assert.Equal(string.Empty, config.StorePath);
         Assert.Equal(5, config.JoinThresholdMinutes);
-        Assert.Empty(config.Channels);
     }
 }

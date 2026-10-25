@@ -1,6 +1,5 @@
-using Jellyfin.Plugin.LinearTv.Import;
-using Jellyfin.Plugin.LinearTv.Library;
 using Jellyfin.Plugin.LinearTv.LiveTv;
+using Jellyfin.Plugin.LinearTv.Store;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Controller.Plugins;
@@ -19,15 +18,15 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
         serviceCollection.TryAddSingleton(TimeProvider.System);
-        serviceCollection.AddSingleton<ContentResolver>();
-        serviceCollection.AddSingleton<ApiKeyProvider>();
+        serviceCollection.AddSingleton<ChannelStore>();
         serviceCollection.AddSingleton<StreamRegistry>();
-        serviceCollection.AddSingleton<LibraryCatalogueSource>();
 
         // Jellyfin's LiveTvManager takes IEnumerable<ILiveTvService>; this adds ours alongside
         // the built-in one rather than replacing it.
         serviceCollection.AddSingleton<ILiveTvService, LinearTvService>();
 
-        serviceCollection.AddSingleton<IHostedService, GuideRefreshTrigger>();
+        // One instance: a hosted service (refresh on settings save) that the store endpoint also asks.
+        serviceCollection.AddSingleton<GuideRefreshTrigger>();
+        serviceCollection.AddSingleton<IHostedService>(services => services.GetRequiredService<GuideRefreshTrigger>());
     }
 }

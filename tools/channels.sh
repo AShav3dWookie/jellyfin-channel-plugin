@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
-# Channel files against a live server: list the library, check, import, back up, restore.
-# Runs inside the sdk container via `./x channels` (curl and jq live there, not on the host).
+# Lists a server's library, for writing channel files (by hand, or with an AI). Runs inside the
+# sdk container via `./x channels` (curl and jq live there, not on the host). Checking and
+# building a channel file is the builder's job: ./x builder check|build.
 #
-#   ./x channels [--nas] <command>
+#   ./x channels [--nas] library
 #
 # Default target is the test server. --nas targets the server in artifacts/.nas.env:
 #   NAS_URL=http://192.168.1.3:8096
 #   NAS_KEY=<an administrator's API key>
-#
-# Guarantees, so they don't depend on whoever (or whatever) is driving:
-#   - import refuses a file unless that exact content passed `check` against that server in that
-#     mode;
-#   - import and restore back up the current channels first.
 set -euo pipefail
 
 die()  { echo "error: $*" >&2; exit 1; }
@@ -19,21 +15,14 @@ info() { echo "==> $*"; }
 
 usage() {
   cat <<'EOF'
-usage: ./x channels [--nas] <command>
+usage: ./x channels [--nas] library
 
   library               list the server's library -> artifacts/channels/<target>/
                           library.jsonl (films, series, collections), episodes.jsonl, libraries.jsonl
-  list                  the channels on the server now
-  backup                save the current channels -> artifacts/channels/<target>/backup-<time>.json
-  check <file> [--replace]   dry run: how every entry resolves; nothing is saved
-  import <file> [--replace]  back up, then import a file that passed check
-  restore <backup>      back up, then make the channel list exactly <backup>
 
   --nas     target the server in artifacts/.nas.env instead of the test server
-  --replace imported channels become the whole list (default: merge by channel number)
 
-Files are paths inside the repo (the command runs in a container that sees only the repo).
-Format: docs/channel-format.md
+Then write a channel file (docs/channel-format.md) and check it: ./x builder [--nas] check <file>
 EOF
 }
 
@@ -57,77 +46,26 @@ case "$target" in
 esac
 
 DIR=artifacts/channels/$target
-mkdir -p "$DIR/checked"
+mkdir -p "$DIR"
 
 api() { curl -sS -H "Authorization: MediaBrowser Token=\"$KEY\"" "$@"; }
 
-# Fails early, with a reason, rather than letting a later command produce a confusing report.
-# `preflight library` needs only Jellyfin itself: a library can be read before the plugin is in.
+# Fails early, with a reason, rather than letting the listing produce a confusing result.
 preflight() {
-  local code path=/LinearTv/Channels/Export
-  [[ "${1:-}" == library ]] && path=/Library/VirtualFolders
-  code=$(api -m 15 -o /dev/null -w '%{http_code}' "$URL$path") \
+  local code
+  code=$(api -m 15 -o /dev/null -w '%{http_code}' "$URL/Library/VirtualFolders") \
     || die "cannot reach $URL"
   case "$code" in
     200) ;;
     401) die "$URL rejected the API key" ;;
     403) die "the API key on $URL doesn't belong to an administrator" ;;
-    404) die "$URL has no channel import endpoint: Linear TV 0.3 or later isn't installed there" ;;
     *)   die "$URL answered HTTP $code" ;;
   esac
 }
 
-# Readable form of an import report, from the last import call.
-report() {
-  local code="$1" file="$DIR/last-report.json"
-  if [[ "$code" == 400 ]]; then
-    echo "HTTP 400 - refused: $(jq -r .error "$file")"
-    return
-  fi
-  jq -r --arg code "$code" '
-    "HTTP \($code) - \(if .ok then "OK" else "REFUSED: fix the X lines" end)"
-      + (if .dryRun then " (dry run, nothing saved)" elif .saved then ", saved" else ", nothing saved" end)
-      + ", mode \(.mode)",
-    (.errors[] | "  ERROR \(.)"),
-    (.channels[] |
-      "",
-      "\(.number) \(.name)\(if .shuffle then " (shuffle)" else "" end)\(if .action then "  [\(.action)]" else "" end)",
-      (.content[] |
-        if .matched == null then "  X  \(.requested): \(.note)"
-        elif .note then "  ~  \(.requested) -> \(.matched)   (\(.note))"
-        else "  ok \(.requested) -> \(.matched)" end),
-      (.problems[] | select(startswith("Missing") or startswith("No content")) | "  X  \(.)"),
-      (.warnings[] | "  !  \(.)")),
-    (if (.removed | length) > 0 then "", "Removed: \(.removed | join(", "))" else empty end),
-    "",
-    "Legend: ok exact match, ~ matched with a note (check it), X refused, ! warning"
-  ' "$file"
-}
-
-# Posts a channel file to the import endpoint; prints the HTTP status.
-post() {
-  local file="$1" query="$2"
-  api -o "$DIR/last-report.json" -w '%{http_code}' -H 'Content-Type: application/json' \
-    --data-binary @"$file" "$URL/LinearTv/Channels/Import?$query"
-}
-
-mode_of() { [[ "${1:-}" == --replace ]] && echo replace || echo merge; }
-
-# Identifies "this content, checked against this server, in this mode".
-marker() { echo "$DIR/checked/$(cat "$1" | sha256sum | cut -c1-16)-$2"; }
-
-backup() {
-  local out
-  out="$DIR/backup-$(date -u +%Y%m%dT%H%M%SZ).json"
-  api -f "$URL/LinearTv/Channels/Export" > "$out" || die "export failed"
-  info "Backed up $(jq '.channels | length' "$out") channels to $out"
-}
-
-need_file() { [[ -n "${1:-}" && -f "$1" ]] || die "no such file: ${1:-<missing>} (paths are relative to the repo)"; }
-
 case "$cmd" in
   library)
-    preflight library
+    preflight
     info "Reading the library on $URL"
     # CollapseBoxSetItems=false: with "group movies into collections" on, Jellyfin otherwise
     # hides every film that belongs to a collection inside it.
@@ -152,58 +90,6 @@ case "$cmd" in
     unidentified=$(jq -s 'map(select(.unidentified)) | length' "$DIR/library.jsonl")
     [[ "$unidentified" == 0 ]] || info "$unidentified not identified by Jellyfin: their titles are file names"
     info "Written to $DIR/{library,episodes,libraries}.jsonl"
-    ;;
-
-  list)
-    preflight
-    api -f "$URL/LinearTv/Channels/Export" \
-      | jq -r '.channels[] | "\(.number)\t\(.name)\t\(if .shuffle then "shuffle" else "in order" end)\t\(.content | length) entries"'
-    ;;
-
-  backup)
-    preflight
-    backup
-    ;;
-
-  check)
-    need_file "${1:-}"
-    file="$1"; mode=$(mode_of "${2:-}")
-    preflight
-    code=$(post "$file" "dryRun=true&mode=$mode")
-    report "$code"
-    if [[ "$code" == 200 ]]; then
-      touch "$(marker "$file" "$mode")"
-      echo
-      info "Ready to import: ./x channels$([[ $target == nas ]] && echo " --nas") import $file$([[ $mode == replace ]] && echo " --replace")"
-    else
-      exit 1
-    fi
-    ;;
-
-  import)
-    need_file "${1:-}"
-    file="$1"; mode=$(mode_of "${2:-}")
-    [[ -f "$(marker "$file" "$mode")" ]] \
-      || die "$file hasn't passed a check against the $target server in $mode mode (or has changed since): run ./x channels$([[ $target == nas ]] && echo " --nas") check $file$([[ $mode == replace ]] && echo " --replace")"
-    preflight
-    backup
-    code=$(post "$file" "mode=$mode")
-    report "$code"
-    rm -f "$(marker "$file" "$mode")"
-    # The library can change between check and import; a refusal here saved nothing.
-    [[ "$code" == 200 ]] || exit 1
-    ;;
-
-  restore)
-    need_file "${1:-}"
-    file="$1"
-    preflight
-    code=$(post "$file" "dryRun=true&mode=replace")
-    [[ "$code" == 200 ]] || { report "$code"; die "$file doesn't resolve cleanly on $URL; nothing changed"; }
-    backup
-    code=$(post "$file" "mode=replace")
-    report "$code"
-    [[ "$code" == 200 ]] || exit 1
     ;;
 
   ""|-h|--help|help) usage ;;

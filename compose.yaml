@@ -31,6 +31,8 @@ services:
       - ./testdata/jellyfin/config:/config
       - ./testdata/jellyfin/cache:/cache
       - ./testdata/media:/media:ro
+      # The plugin's store of built channels: ./x publish copies builds here, as it would to the NAS.
+      - ./testdata/store:/store:ro
       # Only the shipped DLL + PDB live here (see ./x deploy). No version in the folder name, so
       # version bumps need no change here; ./x deploy clears the meta.json Jellyfin caches the
       # version in.

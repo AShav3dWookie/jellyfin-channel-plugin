@@ -1,0 +1,30 @@
+{
+  // Test channels for the 1.0 builder: ./x builder build tests/channels/test.json
+  "version": 1,
+  "channels": [
+    {
+      "number": "104",
+      "name": "Mixed Formats",
+      "content": [ { "type": "series", "title": "Mixed Show" } ]
+    },
+    {
+      "number": "105",
+      "name": "Language Rules",
+      "content": [
+        { "type": "movie", "title": "Lang Test" },
+        { "type": "movie", "title": "Forced Test" },
+        { "type": "movie", "title": "Anamorphic Test" },
+        { "type": "movie", "title": "Scope Test" },
+        { "type": "movie", "title": "HDR Test" },
+        { "type": "movie", "title": "Dub Only" },
+        { "type": "movie", "title": "External Subs" },
+        { "type": "movie", "title": "Schindler's Test" }
+      ]
+    },
+    {
+      "number": "106",
+      "name": "Dub Allowed",
+      "content": [ { "type": "movie", "title": "Dub Only", "audio": "eng" } ]
+    }
+  ]
+}
