@@ -8,6 +8,8 @@ using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.LiveTv;
 using MediaBrowser.Model.MediaInfo;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LinearTv.LiveTv;
@@ -24,6 +26,7 @@ namespace Jellyfin.Plugin.LinearTv.LiveTv;
 internal sealed class LinearTvService(
     ChannelStore store,
     IServerApplicationHost appHost,
+    IServiceProvider services,
     StreamRegistry streams,
     TimeProvider time,
     ILogger<LinearTvService> logger) : ILiveTvService, ISupportsDirectStreamProvider
@@ -57,7 +60,7 @@ internal sealed class LinearTvService(
     public Task<IEnumerable<ProgramInfo>> GetProgramsAsync(
         string channelId, DateTime startDateUtc, DateTime endDateUtc, CancellationToken cancellationToken)
     {
-        if (store.Find(channelId) is not { } channel)
+        if (Lookup(channelId) is not { } channel)
         {
             return Task.FromResult(Enumerable.Empty<ProgramInfo>());
         }
@@ -86,7 +89,7 @@ internal sealed class LinearTvService(
         string channelId, string streamId, List<ILiveStream> currentLiveStreams, CancellationToken cancellationToken)
     {
         var channel = FindChannel(channelId);
-        var liveStream = new LinearLiveStream(CreateMediaSource(channel), () => OpenStream(channel), LocalBaseUrl, streams.Remove);
+        var liveStream = new LinearLiveStream(CreateMediaSource(channel), () => OpenStream(channel), LocalBaseUrl, ClientBaseUrl, streams.Remove);
         streams.Add(liveStream);
         return Task.FromResult<ILiveStream>(liveStream);
     }
@@ -169,8 +172,23 @@ internal sealed class LinearTvService(
     // address rather than whatever the server is published as.
     private string LocalBaseUrl => appHost.GetApiUrlForLocalAccess(null, false);
 
+    /// <summary>
+    /// Jellyfin's base URL as the client tuning in reached it, from the request that opens the
+    /// stream (a client's PlaybackInfo or LiveStreams/Open); null outside a request. Behind a
+    /// reverse proxy, Jellyfin's forwarded-headers handling has already made this the public URL.
+    /// </summary>
+    private string? ClientBaseUrl
+        => services.GetService<IHttpContextAccessor>()?.HttpContext?.Request is { Host.HasValue: true } request
+            ? $"{request.Scheme}://{request.Host}{request.PathBase}"
+            : null;
+
     private StoredChannel FindChannel(string channelId)
-        => store.Find(channelId) ?? throw new ArgumentException($"No Linear TV channel with id {channelId}.", nameof(channelId));
+        => Lookup(channelId) ?? throw new ArgumentException($"No Linear TV channel with id {channelId}.", nameof(channelId));
+
+    // The store is scanned at each guide refresh. After a restart that's still to come, though
+    // Jellyfin's guide already lists the channels, so a miss scans the store before giving up.
+    private StoredChannel? Lookup(string channelId)
+        => store.Find(channelId) ?? store.Refresh(Config.StorePath).FirstOrDefault(c => c.Id == channelId);
 
     /// <summary>The channel from the live position now. Called once per reader of the stream URL, so each joins at its own moment.</summary>
     private Stream OpenStream(StoredChannel channel)

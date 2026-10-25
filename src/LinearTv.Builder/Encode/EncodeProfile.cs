@@ -16,9 +16,6 @@ namespace LinearTv.Builder.Encode;
 /// </remarks>
 internal static class EncodeProfile
 {
-    public const int Width = 1280;
-    public const int Height = 720;
-    public const int MaxBitRate = 10_000_000;
     public const int AudioBitRate = 192_000;
     public const int SampleRate = 48_000;
 
@@ -32,10 +29,10 @@ internal static class EncodeProfile
     /// <summary>Raise when something changes that <see cref="Arguments"/> doesn't show, such as the ffmpeg build.</summary>
     private const int Revision = 1;
 
-    public static VideoFormat Video(FrameRate rate) => new()
+    public static VideoFormat Video(FrameRate rate, Resolution size) => new()
     {
-        Codec = "hevc", Profile = "Main", Level = 123, Width = Width, Height = Height,
-        FrameRate = Math.Round(rate.Value, 3), MaxBitRate = MaxBitRate,
+        Codec = "hevc", Profile = "Main", Level = 123, Width = size.Width, Height = size.Height,
+        FrameRate = Math.Round(rate.Value, 3), MaxBitRate = int.Parse(size.MaxRate.TrimEnd('M'), CultureInfo.InvariantCulture) * 1_000_000,
     };
 
     public static AudioFormat Audio() => new() { Codec = "aac", Channels = 2, SampleRate = SampleRate, BitRate = AudioBitRate };
@@ -47,8 +44,9 @@ internal static class EncodeProfile
     /// (<see cref="StaysOnGpu"/>). False forces the CPU chain: the fallback if the GPU path fails.</param>
     public static IReadOnlyList<string> Arguments(
         SourceItem item, TrackChoice choice, string input, string? subtitleInput, FrameRate rate, string output,
-        string preset = DefaultPreset, bool hardwareDecode = true, bool gpuFrames = true)
+        string preset = DefaultPreset, bool hardwareDecode = true, bool gpuFrames = true, Resolution? size = null)
     {
+        size ??= Resolution.Default;
         if (!IsPreset(preset))
         {
             throw new ArgumentException($"NVENC presets are p1 to p7, not '{preset}'.", nameof(preset));
@@ -102,14 +100,14 @@ internal static class EncodeProfile
                 : $"subtitles=filename={FilterValue(input)}:si={SubtitlePosition(item, subtitle)}";
         }
 
-        args.AddRange(["-filter_complex", VideoGraph(video, rate, imageSubtitle, textSubtitle, onGpu), "-map", "[vout]", "-map", audioRef]);
+        args.AddRange(["-filter_complex", VideoGraph(video, rate, imageSubtitle, textSubtitle, onGpu, size), "-map", "[vout]", "-map", audioRef]);
         args.AddRange(
         [
             // H.265 at constant quality 30: measured on Akira and Parasite, 0.4-0.6 GB per hour at
             // VMAF 93-95, against 1.5-2.5 GB per hour for H.264 at CQ21 (VMAF 96-98). Chosen for
             // size; TV apps direct-play it, browsers vary (docs/architecture.md).
             "-c:v", "hevc_nvenc", "-preset", preset, "-tune", "hq", "-profile:v", "main", "-level:v", "4.1", "-tier", "main",
-            "-rc", "vbr", "-cq", "30", "-b:v", "0", "-maxrate", "10M", "-bufsize", "20M",
+            "-rc", "vbr", "-cq", size.Cq.ToString(CultureInfo.InvariantCulture), "-b:v", "0", "-maxrate", size.MaxRate, "-bufsize", size.BufferSize,
             // A keyframe every 2 s exactly, each an IDR with SPS/PPS: tuning in can start at any one.
             "-g", rate.GopFrames.ToString(CultureInfo.InvariantCulture), "-strict_gop", "1", "-no-scenecut", "1", "-forced-idr", "1",
             "-bf", "2", "-spatial-aq", "1", "-temporal-aq", "1",
@@ -150,8 +148,11 @@ internal static class EncodeProfile
     /// square the pixels, fit inside 1280×720 without changing the shape, pad with black, then
     /// render text subtitles onto the final frame.
     /// </summary>
-    internal static string VideoGraph(VideoInfo video, FrameRate rate, string? imageSubtitle, string? textSubtitle, bool onGpu = false)
+    internal static string VideoGraph(
+        VideoInfo video, FrameRate rate, string? imageSubtitle, string? textSubtitle, bool onGpu = false, Resolution? size = null)
     {
+        size ??= Resolution.Default;
+        var (Width, Height) = (size.Width, size.Height);
         var source = $"[0:{video.Index}]";
 
         // Frames decoded on the GPU are scaled there and only the 720p result comes back: measured
@@ -252,9 +253,9 @@ internal static class EncodeProfile
     /// The piece file name for an item: the item, plus a hash of everything that shapes the
     /// output except the paths. A piece left by an interrupted build is reused only if it matches.
     /// </summary>
-    public static string CacheKey(SourceItem item, TrackChoice choice, FrameRate rate, string preset = DefaultPreset)
+    public static string CacheKey(SourceItem item, TrackChoice choice, FrameRate rate, string preset = DefaultPreset, Resolution? size = null)
     {
-        var shape = string.Join(' ', Arguments(item, choice, "<in>", "<sub>", rate, "<out>", preset)) + $" r{Revision}";
+        var shape = string.Join(' ', Arguments(item, choice, "<in>", "<sub>", rate, "<out>", preset, size: size)) + $" r{Revision}";
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(shape)))[..12];
         return $"{item.Id:N}-{hash}";
     }

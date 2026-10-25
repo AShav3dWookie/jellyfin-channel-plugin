@@ -25,6 +25,8 @@ internal sealed class ChannelPlan
 
     public required FrameRate FrameRate { get; init; }
 
+    public Resolution Resolution => Channel.Resolution;
+
     /// <summary>Gets the items left out, with why.</summary>
     public required IReadOnlyList<string> Skipped { get; init; }
 

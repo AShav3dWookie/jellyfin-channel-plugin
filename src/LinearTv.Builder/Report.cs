@@ -68,7 +68,7 @@ internal static class Report
             + (plan.Channel.Passes > 1 ? $" x {plan.Channel.Passes} passes = {plan.Length.TotalHours:0.#} h" : string.Empty)
             + $", loops every {Describe(plan.Length)}");
         output.WriteLine(
-            $"    {EncodeProfile.Width}x{EncodeProfile.Height} at {plan.FrameRate.Display} fps; "
+            $"    {plan.Resolution} ({plan.Resolution.Width}x{plan.Resolution.Height}) at {plan.FrameRate.Display} fps; "
             + $"{plan.Items.Count(i => Math.Abs(FrameRate.Nearest(i.Item.Video!.FrameRate).Value - plan.FrameRate.Value) > 0.01)} item(s) converted from another rate; "
             + $"{plan.Items.Count(i => i.Item.Video!.Hdr)} HDR (tone-mapped); {plan.Items.Count(i => i.Item.Video!.Interlaced)} interlaced");
         output.WriteLine($"    {(plan.Chunked ? "hour-long files" : "one file")}");
@@ -87,7 +87,7 @@ internal static class Report
 
         if (encoder is not null)
         {
-            var missing = plan.Items.Where(i => !encoder.IsEncoded(i, plan.FrameRate)).ToList();
+            var missing = plan.Items.Where(i => !encoder.IsEncoded(i, plan.FrameRate, plan.Resolution)).ToList();
             output.WriteLine(missing.Count == 0
                 ? "    all items already encoded (left from an earlier run)"
                 : $"    to encode: {missing.Count} items, {TimeSpan.FromTicks(missing.Sum(i => i.Item.RuntimeTicks)).TotalHours:0.#} h, at preset {encoder.Preset}");

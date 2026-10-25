@@ -46,11 +46,11 @@ public class PluginIdentityTests
     }
 
     [Fact]
-    public void Configuration_DefaultsToNoStoreAndAFiveMinuteJoinThreshold()
+    public void Configuration_DefaultsToNoStoreAndNoJoinThreshold()
     {
         var config = new PluginConfiguration();
 
         Assert.Equal(string.Empty, config.StorePath);
-        Assert.Equal(5, config.JoinThresholdMinutes);
+        Assert.Equal(0, config.JoinThresholdMinutes);
     }
 }

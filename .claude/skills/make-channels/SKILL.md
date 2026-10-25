@@ -98,6 +98,9 @@ Building only uses this PC and needs no go-ahead: once the check passes, build.
 - **Numbering:** run `./x store --nas` first. New channels go from **200** upward, in the
   first free numbers. Reuse a number only when the user wants that channel replaced: the
   newest build of a number is the one on air.
+- **Resolution:** channels default to 720p, fine for animation. For live-action film channels
+  offer `"resolution": "1080p"` (sharper; about twice the size and build time). `"cq"` (default
+  30) trades size for quality; the user is still comparing, so ask rather than assume.
 - **Order:** film channels shuffle (`"shuffle": true`), series channels play in order, unless
   the user says otherwise. `"passes": 2` or more puts the lineup in the file that many times,
   each shuffled differently: use it for small shuffled channels that would otherwise repeat

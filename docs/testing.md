@@ -660,7 +660,7 @@ Warnings are treated as errors, so `0 Warning(s)` is a real zero.
 |---|---|
 | `ConfigPage_IsEmbeddedUnderTheExactNameThePluginRequests` | A settings page that is missing on Linux because of a filename case mismatch |
 | `PluginId_MatchesBuildYamlAndConfigPage` | The plugin GUID drifting between `Plugin.cs`, `build.yaml` and `configPage.html`. Drift gives a settings page that loads but never saves, or an update that installs *alongside* the old version. |
-| `Configuration_DefaultsToUtcAndAFiveMinuteJoinThreshold` | Default settings changing unnoticed |
+| `Configuration_DefaultsToNoStoreAndNoJoinThreshold` | Default settings changing unnoticed |
 
 **Optional: prove a failing test fails the command.** Edit
 `tests/Jellyfin.Plugin.LinearTv.Tests/PluginIdentityTests.cs`, change `Assert.Equal(5, …)` to

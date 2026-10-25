@@ -1,6 +1,7 @@
 using Jellyfin.Plugin.LinearTv.LiveTv;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
 
 namespace Jellyfin.Plugin.LinearTv.Tests;
 
@@ -40,6 +41,18 @@ public class LinearLiveStreamTests
     }
 
     [Fact]
+    public void ClientsGetTheAddressTheyUsed_JellyfinsFfmpegTheLocalOne()
+    {
+        // In Docker the local address is a container one: a TV direct-playing it span forever.
+        var stream = new LinearLiveStream(
+            new MediaSourceInfo { Id = "ch", MediaStreams = [] }, () => new MemoryStream(), "http://172.16.5.2:8096", "http://192.168.1.3:8096/");
+
+        Assert.Equal($"http://192.168.1.3:8096/LinearTv/Stream/{stream.UniqueId}.ts", stream.MediaSource.Path);
+        Assert.Equal($"http://172.16.5.2:8096/LinearTv/Stream/{stream.UniqueId}.ts", stream.MediaSource.EncoderPath);
+        Assert.Equal(MediaProtocol.Http, stream.MediaSource.EncoderProtocol);
+    }
+
+    [Fact]
     public void Closing_RemovesTheStreamFromTheRegistry_Once()
     {
         var registry = new StreamRegistry();
@@ -48,7 +61,7 @@ public class LinearLiveStreamTests
             new MediaSourceInfo { Id = "ch", MediaStreams = [] },
             () => new MemoryStream(),
             "http://127.0.0.1:8096",
-            s => { removals++; registry.Remove(s); });
+            onClosed: s => { removals++; registry.Remove(s); });
         registry.Add(stream);
 
         Assert.Same(stream, registry.Find(stream.UniqueId));

@@ -15,9 +15,11 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>
     /// Gets or sets how many minutes must remain in a programme for a viewer to join it.
-    /// Tuning in below this threshold skips to the next programme instead. Zero disables.
+    /// Tuning in below this threshold skips to the next programme instead. Zero, the default,
+    /// always joins where the broadcast is, end credits included, like a real channel: a skip
+    /// puts the viewer up to this many minutes ahead of the guide until they next tune.
     /// </summary>
-    public int JoinThresholdMinutes { get; set; } = 5;
+    public int JoinThresholdMinutes { get; set; }
 
     // Channels and ScheduleTimeZone (to 0.4) are gone: channels are built, not configured here.
     // Saved settings that still contain them load fine; the XML serializer skips unknown elements.

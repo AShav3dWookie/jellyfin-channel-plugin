@@ -1,6 +1,7 @@
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
 
 namespace Jellyfin.Plugin.LinearTv.LiveTv;
 
@@ -46,16 +47,26 @@ internal sealed class LinearLiveStream : ILiveStream
     /// <param name="mediaSource">The channel's source, as built for the current programme.</param>
     /// <param name="openStream">Opens a new continuous channel stream from the live position.</param>
     /// <param name="localBaseUrl">Jellyfin's own base URL, as reachable from inside its host.</param>
+    /// <param name="clientBaseUrl">Jellyfin's base URL as the client tuning in reached it, or null if unknown.</param>
     /// <param name="onClosed">Called once when the stream is closed or disposed.</param>
     public LinearLiveStream(
-        MediaSourceInfo mediaSource, Func<Stream> openStream, string localBaseUrl, Action<LinearLiveStream>? onClosed = null)
+        MediaSourceInfo mediaSource, Func<Stream> openStream, string localBaseUrl, string? clientBaseUrl = null, Action<LinearLiveStream>? onClosed = null)
     {
         _openStream = openStream;
         _onClosed = onClosed;
 
         // The plugin's own endpoint (Api/ChannelStreamController), not Jellyfin's LiveStreamFiles:
         // that one holds a finished stream open for 30 s, which viewers saw as a frozen frame.
-        mediaSource.Path = $"{localBaseUrl.TrimEnd('/')}/LinearTv/Stream/{UniqueId}.ts";
+        //
+        // Two addresses for it. Path is what a client direct-plays: jellyfin-web fetches it as it
+        // is, so it must be the address the client reached Jellyfin by. Jellyfin's own address
+        // from inside its host is, in Docker, a container address no other device can reach: the
+        // LG webOS app span forever on it (0.3 broke the same way after a Jellyfin update).
+        // EncoderPath is what Jellyfin's own ffmpeg reads (browsers' HLS route): the local address.
+        var endpoint = $"/LinearTv/Stream/{UniqueId}.ts";
+        mediaSource.Path = $"{(clientBaseUrl ?? localBaseUrl).TrimEnd('/')}{endpoint}";
+        mediaSource.EncoderPath = $"{localBaseUrl.TrimEnd('/')}{endpoint}";
+        mediaSource.EncoderProtocol = MediaProtocol.Http;
         _mediaSource = mediaSource;
         // Keyed by reference: these exact objects are what Normalize() mutates.
         _trueInterlacing = mediaSource.MediaStreams

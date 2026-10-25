@@ -87,6 +87,8 @@ Leave out `--nas` to use the test server.
 | `name` | yes | Shown in the guide. |
 | `shuffle` | no | `false` (default): play the content in the order listed, in episode order within a series. `true`: a stable shuffle. |
 | `passes` | no | How many times the lineup is in the channel's file, 1 to 20 (default 1). Each pass is shuffled differently, so a small shuffled channel doesn't repeat the same order every loop. Multiplies the channel's size; items are encoded once either way. |
+| `resolution` | no | `720p` (default) or `1080p`. Every programme is fitted inside it. 720p is fine for animation; live action loses visible detail (Die Hard: VMAF 88 at 720p, 95 at 1080p). 1080p is about twice the size and half the encoding speed. |
+| `cq` | no | Encoder constant quality, 15 to 40 (default 30): lower is better and bigger. At 1080p, Die Hard measured 0.89 GB/h at 30 and 1.85 GB/h at 26. |
 | `audio` | no | Audio language for every entry that doesn't set its own (below). |
 | `subtitles` | no | Subtitle rule for every entry that doesn't set its own (below). |
 | `content` | yes | One or more content entries. |

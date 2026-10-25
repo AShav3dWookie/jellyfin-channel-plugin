@@ -27,13 +27,13 @@ internal sealed class ChannelBuilder(JellyfinClient client, PieceEncoder encoder
     public async Task<string?> BuildAsync(ChannelPlan plan, CancellationToken ct)
     {
         var rate = plan.FrameRate;
-        var work = plan.Items.Where(i => !encoder.IsEncoded(i, rate)).ToList();
+        var work = plan.Items.Where(i => !encoder.IsEncoded(i, rate, plan.Resolution)).ToList();
         if (work.Count > 0)
         {
             log.WriteLine(
                 $"  encoding {work.Count} of {plan.Items.Count} items ({TimeSpan.FromTicks(work.Sum(w => w.Item.RuntimeTicks)).TotalHours:0.#} h), {jobs} at a time"
                 + (work.Count < plan.Items.Count ? "; the rest are left from an earlier run" : string.Empty));
-            var failures = await encoder.EncodeAsync(work, rate, jobs, ct).ConfigureAwait(false);
+            var failures = await encoder.EncodeAsync(work, rate, plan.Resolution, jobs, ct).ConfigureAwait(false);
             if (failures.Count > 0)
             {
                 log.WriteLine(
@@ -49,7 +49,7 @@ internal sealed class ChannelBuilder(JellyfinClient client, PieceEncoder encoder
         Directory.CreateDirectory(Path.Combine(partial, "art"));
 
         var images = await FetchArtworkAsync(plan, partial, ct).ConfigureAwait(false);
-        var paths = plan.Programmes.Select(p => encoder.PathFor(p, rate)).ToList();
+        var paths = plan.Programmes.Select(p => encoder.PathFor(p, rate, plan.Resolution)).ToList();
         var lastUse = paths.Select((path, i) => (path, i)).GroupBy(x => x.path).ToDictionary(g => g.Key, g => g.Max(x => x.i));
         var pieces = plan.Programmes
             .Select((p, i) => new AssemblyPiece(paths[i], ChannelPlan.GuideEntry(p.Item, images.GetValueOrDefault(p.Item.Id)), DeleteAfter: lastUse[paths[i]] == i))
@@ -64,7 +64,7 @@ internal sealed class ChannelBuilder(JellyfinClient client, PieceEncoder encoder
             Name = plan.Channel.Name,
             Built = built,
             CycleTicks = result.CycleTicks,
-            Video = EncodeProfile.Video(rate),
+            Video = EncodeProfile.Video(rate, plan.Resolution),
             Audio = EncodeProfile.Audio(),
             Psi = result.Psi,
             Files = result.Files,

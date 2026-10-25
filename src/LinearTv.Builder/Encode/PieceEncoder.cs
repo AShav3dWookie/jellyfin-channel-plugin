@@ -11,17 +11,17 @@ namespace LinearTv.Builder.Encode;
 /// </summary>
 internal sealed class PieceEncoder(string ffmpeg, string workDir, string preset, bool hardwareDecode, TextWriter log)
 {
-    public string PathFor(PlannedItem item, FrameRate rate)
-        => Path.Combine(workDir, EncodeProfile.CacheKey(item.Item, item.Choice, rate, preset) + ".ts");
+    public string PathFor(PlannedItem item, FrameRate rate, Resolution size)
+        => Path.Combine(workDir, EncodeProfile.CacheKey(item.Item, item.Choice, rate, preset, size) + ".ts");
 
     public string Preset => preset;
 
-    public bool IsEncoded(PlannedItem item, FrameRate rate) => File.Exists(PathFor(item, rate));
+    public bool IsEncoded(PlannedItem item, FrameRate rate, Resolution size) => File.Exists(PathFor(item, rate, size));
 
     /// <summary>Encodes every item given, <paramref name="jobs"/> at a time.</summary>
     /// <returns>The items that failed, with why.</returns>
     public async Task<List<(PlannedItem Item, string Error)>> EncodeAsync(
-        IReadOnlyList<PlannedItem> work, FrameRate rate, int jobs, CancellationToken ct)
+        IReadOnlyList<PlannedItem> work, FrameRate rate, Resolution size, int jobs, CancellationToken ct)
     {
         Directory.CreateDirectory(workDir);
         var failures = new List<(PlannedItem, string)>();
@@ -33,7 +33,7 @@ internal sealed class PieceEncoder(string ffmpeg, string workDir, string preset,
         await Parallel.ForEachAsync(work, new ParallelOptions { MaxDegreeOfParallelism = jobs, CancellationToken = ct }, async (w, token) =>
         {
             var clock = Stopwatch.StartNew();
-            var error = await EncodeOneAsync(w, rate, token).ConfigureAwait(false);
+            var error = await EncodeOneAsync(w, rate, size, token).ConfigureAwait(false);
             var speed = TimeSpan.FromTicks(w.Item.RuntimeTicks) / clock.Elapsed;
             lock (failures)
             {
@@ -60,22 +60,22 @@ internal sealed class PieceEncoder(string ffmpeg, string workDir, string preset,
 
     private static string Quote(string arg) => arg.Any(c => char.IsWhiteSpace(c) || c is '"' or '\'' or ';' or '[') ? $"\"{arg.Replace("\"", "\\\"")}\"" : arg;
 
-    private async Task<string?> EncodeOneAsync(PlannedItem item, FrameRate rate, CancellationToken ct)
+    private async Task<string?> EncodeOneAsync(PlannedItem item, FrameRate rate, Resolution size, CancellationToken ct)
     {
-        var error = await EncodeOneAsync(item, rate, gpuFrames: true, ct).ConfigureAwait(false);
+        var error = await EncodeOneAsync(item, rate, size, gpuFrames: true, ct).ConfigureAwait(false);
         if (error is not null && hardwareDecode && EncodeProfile.StaysOnGpu(item.Item.Video!, item.Choice))
         {
             // The GPU path is an optimisation: an odd stream it can't take still encodes on the CPU.
             log.WriteLine($"    {item.Item}: GPU scaling failed ({error}); retrying on the CPU");
-            error = await EncodeOneAsync(item, rate, gpuFrames: false, ct).ConfigureAwait(false);
+            error = await EncodeOneAsync(item, rate, size, gpuFrames: false, ct).ConfigureAwait(false);
         }
 
         return error;
     }
 
-    private async Task<string?> EncodeOneAsync(PlannedItem item, FrameRate rate, bool gpuFrames, CancellationToken ct)
+    private async Task<string?> EncodeOneAsync(PlannedItem item, FrameRate rate, Resolution size, bool gpuFrames, CancellationToken ct)
     {
-        var final = PathFor(item, rate);
+        var final = PathFor(item, rate, size);
         var partial = final + ".partial";
         var info = new ProcessStartInfo(ffmpeg)
         {
@@ -84,7 +84,7 @@ internal sealed class PieceEncoder(string ffmpeg, string workDir, string preset,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        foreach (var arg in EncodeProfile.Arguments(item.Item, item.Choice, item.LocalPath, item.LocalSubtitlePath, rate, partial, preset, hardwareDecode, gpuFrames))
+        foreach (var arg in EncodeProfile.Arguments(item.Item, item.Choice, item.LocalPath, item.LocalSubtitlePath, rate, partial, preset, hardwareDecode, gpuFrames, size))
         {
             info.ArgumentList.Add(arg);
         }

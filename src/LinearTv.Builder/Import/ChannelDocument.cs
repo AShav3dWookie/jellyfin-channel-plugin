@@ -53,6 +53,12 @@ internal sealed class ChannelSpec
     /// <summary>Gets or sets how many times the lineup is in the channel file, each pass shuffled anew. Default 1.</summary>
     public int? Passes { get; set; }
 
+    /// <summary>Gets or sets the picture size: 720p (default) or 1080p.</summary>
+    public string? Resolution { get; set; }
+
+    /// <summary>Gets or sets NVENC's constant quality, 15 to 40: lower is better and bigger. Default 30.</summary>
+    public int? Cq { get; set; }
+
     /// <summary>Gets or sets the audio language for every entry that doesn't set its own; default the original language.</summary>
     public string? Audio { get; set; }
 

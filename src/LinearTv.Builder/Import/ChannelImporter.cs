@@ -1,4 +1,5 @@
 using System.Text;
+using LinearTv.Builder.Encode;
 using LinearTv.Builder.Library;
 
 namespace LinearTv.Builder.Import;
@@ -29,6 +30,8 @@ internal sealed class ChannelReport
 
     public int Passes { get; set; } = 1;
 
+    public string Resolution { get; set; } = "720p";
+
     public List<ResolvedContent> Content { get; } = [];
 
     /// <summary>Gets what stops the channel being built.</summary>
@@ -40,7 +43,11 @@ internal sealed class ChannelReport
 
 /// <summary>A channel whose content all resolved: its sources, in the order listed, each with its track options.</summary>
 internal sealed record ResolvedChannel(
-    string Number, string Name, bool Shuffle, int Passes, IReadOnlyList<ResolvedSource> Sources, string Language);
+    string Number, string Name, bool Shuffle, int Passes, IReadOnlyList<ResolvedSource> Sources, string Language)
+{
+    /// <summary>Gets the picture size every programme is fitted to.</summary>
+    public Resolution Resolution { get; init; } = Resolution.Default;
+}
 
 /// <summary>One resolved content entry: the library item, and the audio and subtitle rules for what it expands to.</summary>
 internal sealed record ResolvedSource(Guid Id, TrackOptions Options);
@@ -134,6 +141,26 @@ internal static class ChannelImporter
                 channel.Problems.Add($"passes must be from 1 to {MaxPasses}, not {spec.Passes}.");
             }
 
+            var resolution = spec.Resolution is null ? Resolution.Default : Resolution.Parse(spec.Resolution);
+            if (resolution is null)
+            {
+                channel.Problems.Add($"resolution must be 720p or 1080p, not '{spec.Resolution}'.");
+            }
+            else if (spec.Cq is { } cq)
+            {
+                if (cq is < 15 or > 40)
+                {
+                    channel.Problems.Add($"cq must be from 15 to 40, not {cq}.");
+                }
+
+                resolution = resolution with { Cq = cq };
+            }
+
+            if (resolution is not null)
+            {
+                channel.Resolution = resolution.ToString();
+            }
+
             var channelOptions = ParseOptions(spec.Audio, spec.Subtitles, TrackOptions.Default, channel.Problems, "channel");
             var ids = new List<Guid>();
             var sources = new List<ResolvedSource>();
@@ -168,7 +195,10 @@ internal static class ChannelImporter
             }
 
             report.Channels.Add(channel);
-            channels.Add(new ResolvedChannel(channel.Number ?? string.Empty, channel.Name ?? string.Empty, spec.Shuffle, channel.Passes, sources, viewer));
+            channels.Add(new ResolvedChannel(channel.Number ?? string.Empty, channel.Name ?? string.Empty, spec.Shuffle, channel.Passes, sources, viewer)
+            {
+                Resolution = resolution ?? Resolution.Default,
+            });
         }
 
         return (report, channels);

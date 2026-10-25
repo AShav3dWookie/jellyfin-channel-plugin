@@ -258,6 +258,38 @@ public class ChannelImporterTests
         Assert.Equal(expected, channels.Single().Passes);
     }
 
+    [Theory]
+    [InlineData(null, "720p", true)]
+    [InlineData("1080p", "1080p", true)]
+    [InlineData("1080", "1080p", true)]
+    [InlineData("4k", "720p", false)]
+    public void Resolution_Defaults720p_AndMustBeKnown(string? asked, string expected, bool ok)
+    {
+        var spec = Channel("201", "Films", new ContentRef { Type = "movie", Title = "Inception" });
+        spec.Resolution = asked;
+
+        var (report, channels) = ChannelImporter.Resolve(Doc(spec), Library);
+
+        Assert.Equal(ok, report.Ok);
+        Assert.Equal(expected, channels.Single().Resolution.Name);
+    }
+
+    [Theory]
+    [InlineData(null, 30, true)]
+    [InlineData(26, 26, true)]
+    [InlineData(10, 10, false)]
+    public void Cq_Defaults30_AndMustBeInRange(int? asked, int expected, bool ok)
+    {
+        var spec = Channel("201", "Films", new ContentRef { Type = "movie", Title = "Inception" });
+        spec.Resolution = "1080p";
+        spec.Cq = asked;
+
+        var (report, channels) = ChannelImporter.Resolve(Doc(spec), Library);
+
+        Assert.Equal(ok, report.Ok);
+        Assert.Equal((1920, expected), (channels.Single().Resolution.Width, channels.Single().Resolution.Cq));
+    }
+
     // ---- the format ----
 
     [Fact]

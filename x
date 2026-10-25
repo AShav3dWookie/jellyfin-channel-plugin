@@ -682,7 +682,7 @@ cmd_channels() { sdk bash tools/channels.sh "$@"; }
 #   https://github.com/AShav3dWookie/jellyfin-channel-plugin/releases/latest/download/manifest.json
 # Each release carries the zip and a manifest listing every version so far: the previous
 # release's manifest, extended. The version comes from build.yaml, and the zip is built only if
-# the plugin source matches its tag (0.3.0.0 -> v0.3), so a release is exactly what was tagged.
+# the plugin source matches its tag (0.3.0.0 -> v0.3, 1.0.1.0 -> v1.0.1), so a release is exactly what was tagged.
 # Needs the GitHub CLI, logged in.
 GH_REPO=AShav3dWookie/jellyfin-channel-plugin
 cmd_release() {
@@ -692,7 +692,7 @@ cmd_release() {
   [[ -n "$gh" ]] || die "the GitHub CLI (gh) is needed for releases"
 
   version="$(sed -n 's/^version: "\(.*\)"/\1/p' "$PROJECT/build.yaml")"
-  tag="v${version%.0.0}"
+  tag="v${version%.0}"; tag="${tag%.0}" # 1.0.0.0 -> v1.0, 1.0.1.0 -> v1.0.1
   git rev-parse -q --verify "refs/tags/$tag" >/dev/null || die "no tag $tag: commit and tag the release first"
   git ls-remote --exit-code --tags origin "$tag" >/dev/null || die "tag $tag isn't pushed: git push origin $tag"
   git diff --quiet "$tag" -- "$PROJECT" || die "$PROJECT differs from $tag: release only what was tagged"

@@ -83,6 +83,21 @@ public class EncodeTests
     }
 
     [Fact]
+    public void Arguments_1080p_FitsTo1920x1080_WithTheHigherBitrateCeiling()
+    {
+        var item = Item(Hd with { Codec = "hevc", PixelFormat = "yuv420p" });
+        var args = EncodeProfile.Arguments(item, new TrackChoice(item.AudioTracks[0], null), "in.mkv", null, FrameRate.Pal, "out.ts", size: Resolution.Hd1080);
+
+        Assert.Contains("scale_cuda=w=1920:h=1080", Arg(args, "-filter_complex"));
+        Assert.Contains("pad=1920:1080:-1:-1", Arg(args, "-filter_complex"));
+        Assert.Equal(("20M", "40M", "30"), (Arg(args, "-maxrate"), Arg(args, "-bufsize"), Arg(args, "-cq")));
+        Assert.Equal("26", Arg(EncodeProfile.Arguments(item, new TrackChoice(null, null), "in.mkv", null, FrameRate.Pal, "out.ts", size: Resolution.Hd1080 with { Cq = 26 }), "-cq"));
+        Assert.NotEqual(
+            EncodeProfile.CacheKey(item, new TrackChoice(null, null), FrameRate.Pal),
+            EncodeProfile.CacheKey(item, new TrackChoice(null, null), FrameRate.Pal, size: Resolution.Hd1080));
+    }
+
+    [Fact]
     public void Arguments_EndBothStreamsOnTheLastWholeFrame_NotAtTheShorter()
     {
         // 5400.5 s at 25 fps is 135,012.5 frames: the cut is after frame 135,012.
